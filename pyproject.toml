@@ -4,4 +4,40 @@ version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
-dependencies = []
+dependencies = [
+    "asyncio>=4.0.0",
+    "botocore>=1.43.34",
+    "bs4>=0.0.2",
+    "dotenv>=0.9.9",
+    "faiss-cpu>=1.14.3",
+    "httpx>=0.28.1",
+    "jinja2>=3.1.6",
+    "litellm>=1.89.3",
+    "llama-index>=0.14.22",
+    "llama-index-embeddings-google-genai>=0.5.1",
+    "markitdown[all]>=0.1.5",
+    "mcp[cli]>=1.28.0",
+    "pillow>=12.2.0",
+    "pydantic>=2.13.4",
+    "pymupdf4llm>=1.27.2.3",
+    "pyyaml>=6.0.3",
+    "rapidfuzz>=3.14.5",
+    "requests>=2.34.2",
+    "rich>=15.0.0",
+    "tqdm>=4.68.3",
+    "trafilatura>=2.1.0",
+]
+
+
+[project.scripts]
+llm-api = "llm_api_lib.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.25.0"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+package = true
+
+[tool.hatch.build.targets.wheel]
+packages = ["llm_api_lib"]

@@ -1,0 +1,29 @@
+# ==========================================================
+# Project Override Configuration
+# ==========================================================
+# Base defaults live in library folders:
+# - logging_lib/default_config.yaml
+# - llm_api_lib/default_config.yaml
+#
+# This file overrides library defaults for this project.
+# Keep only values you want to customize.
+
+logging:
+  # Override logging defaults here
+  level: INFO
+
+  log_dir: logs
+  log_file: app.log
+
+  max_bytes: 10485760  # 10 MB
+
+  backup_count: 5
+
+llm:
+  # Override LLM defaults here
+  use_env: true
+
+  provider: local
+  model: openai/llama-3.1-8b-instruct
+  base_url: http://localhost:8000/v1
+  temperature: 0.2

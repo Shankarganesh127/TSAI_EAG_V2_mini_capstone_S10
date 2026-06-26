@@ -1,0 +1,97 @@
+# ==========================================================
+# MCP Server Configuration — default_mcp_config.yaml
+# ==========================================================
+# Single source of truth for all MCP server configs and parameters.
+# Script paths are relative to this file's directory (mcp_lib/).
+#
+# Structure:
+#   mcp_servers  - list of servers to load (id, script, description, capabilities)
+#   documents    - runtime parameters for mcp_server_documents.py
+#   websearch    - runtime parameters for mcp_server_websearch.py
+
+
+# ----------------------------------------------------------
+# Server list
+# ----------------------------------------------------------
+
+mcp_servers:
+
+  - id: math
+    script: mcp_server_math.py
+    description: "Math tools: arithmetic, trig, factorial, fibonacci, and string-to-int conversions"
+    capabilities:
+      - add
+      - subtract
+      - multiply
+      - divide
+      - power
+      - cbrt
+      - factorial
+      - remainder
+      - sin
+      - cos
+      - tan
+      - mine
+      - create_thumbnail
+      - strings_to_chars_to_int
+      - int_list_to_exponential_sum
+      - fibonacci_numbers
+
+  - id: documents
+    script: mcp_server_documents.py
+    description: "Document tools: search indexed local files via RAG, extract PDFs, fetch webpages as markdown"
+    capabilities:
+      - search_stored_documents_rag
+      - convert_webpage_url_into_markdown
+      - extract_pdf
+
+  - id: websearch
+    script: mcp_server_websearch.py
+    description: "Web search tools: DuckDuckGo search and raw webpage content fetcher"
+    capabilities:
+      - duckduckgo_search_results
+      - download_raw_html_from_url
+
+
+# ----------------------------------------------------------
+# Documents server parameters
+# ----------------------------------------------------------
+
+documents:
+  # Ollama embedding endpoint
+  embed_url: "http://localhost:11434/api/embeddings"
+
+  # Embedding model name (must be pulled in Ollama)
+  embed_model: "nomic-embed-text"
+
+  # Number of FAISS top-K results to return per query
+  top_k: 5
+
+  # Text chunking: words per chunk and overlap between chunks
+  chunk_size: 256
+  chunk_overlap: 40
+
+  # Paths relative to mcp_lib/ (resolved at runtime)
+  documents_dir: "documents"
+  faiss_index_dir: "faiss_index"
+
+
+# ----------------------------------------------------------
+# Websearch server parameters
+# ----------------------------------------------------------
+
+websearch:
+  # Max requests per minute for DuckDuckGo search
+  search_requests_per_minute: 30
+
+  # Max requests per minute for raw HTML fetch
+  fetch_requests_per_minute: 20
+
+  # HTTP timeout in seconds for all outbound requests
+  request_timeout: 30.0
+
+  # Truncate fetched page text to this many characters
+  max_content_length: 8000
+
+  # DuckDuckGo search endpoint
+  ddg_url: "https://html.duckduckgo.com/html"

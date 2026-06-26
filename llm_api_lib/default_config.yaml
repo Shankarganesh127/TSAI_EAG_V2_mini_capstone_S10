@@ -1,0 +1,14 @@
+# ==========================================================
+# Default LLM Library Configuration
+# ==========================================================
+# This file contains safe defaults for llm_api_lib.
+
+llm:
+  # When true, llm_api_lib reads provider/model settings from .env
+  use_env: true
+
+  # Used when use_env is false
+  provider: local
+  model: openai/llama-3.1-8b-instruct
+  base_url: http://localhost:8000/v1
+  temperature: 0.2
