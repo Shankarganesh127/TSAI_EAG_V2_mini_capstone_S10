@@ -1,0 +1,19 @@
+# ==========================================================
+# Default Session Library Configuration
+# ==========================================================
+# This file contains safe defaults for session_lib.
+
+session:
+  # Root folder where per-session JSON log files are stored.
+  # Resolved relative to session_lib/ at runtime.
+  # Final layout: <base_dir>/YYYY/MM/DD/<session_id>.json
+  base_dir: session_logs
+
+  # Pretty-print JSON with this indent level (set to 0 for compact output).
+  json_indent: 2
+
+  # Print a confirmation line to stdout after every log() call.
+  verbose: true
+
+  # If a session file exists but contains invalid JSON, overwrite it.
+  overwrite_corrupt: true
