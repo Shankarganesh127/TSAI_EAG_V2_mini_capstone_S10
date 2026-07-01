@@ -1,0 +1,58 @@
+import asyncio
+from abc import ABC, abstractmethod
+from typing import Any, Generic, Optional, Type, TypeVar
+
+from pydantic import BaseModel
+
+InputT = TypeVar("InputT", bound=BaseModel)
+OutputT = TypeVar("OutputT", bound=BaseModel)
+
+
+class BaseSubAgent(ABC, Generic[InputT, OutputT]):
+    """
+    Base for all internal stage sub-agents.
+    Each subclass defines PROMPT_TEMPLATE, output_model, and _default_output.
+    The LLM is called only when llm_client is set; otherwise the default
+    is returned so the pipeline works without any LLM configured.
+    """
+
+    PROMPT_TEMPLATE: str = ""
+
+    def __init__(self, llm_client: Optional[Any] = None):
+        self.llm_client = llm_client
+
+    @property
+    @abstractmethod
+    def output_model(self) -> Type[OutputT]: ...
+
+    async def run(self, input_data: InputT) -> OutputT:
+        if self.llm_client is None:
+            return self._default_output(input_data)
+        prompt = self._build_prompt(input_data)
+        return await self._call(prompt, input_data)
+
+    async def _call(self, prompt: str, input_data: InputT) -> OutputT:
+        """Call the LLM, parse the response, and fall back to defaults on error."""
+        try:
+            raw = await asyncio.to_thread(self.llm_client.chat, prompt)
+            return self._parse_output(raw, input_data)
+        except Exception:
+            return self._default_output(input_data)
+
+    def _build_prompt(self, input_data: InputT) -> str:
+        return self.PROMPT_TEMPLATE.format(**input_data.model_dump())
+
+    def _parse_output(self, raw: str, input_data: InputT) -> OutputT:
+        """Extract JSON from LLM response and validate into the output model."""
+        try:
+            text = raw.strip()
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0].strip()
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0].strip()
+            return self.output_model.model_validate_json(text)
+        except Exception:
+            return self._default_output(input_data)
+
+    @abstractmethod
+    def _default_output(self, input_data: InputT) -> OutputT: ...

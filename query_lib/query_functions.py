@@ -1,7 +1,72 @@
+import asyncio
+import json
+
 try:
-    from query_lib.query_context import QueryDissection, Complexity, AgentRouting
+    from query_lib.query_context import QueryDissection, Complexity, AgentRouting, EnrichedQuery
 except ModuleNotFoundError:
-    from query_context import QueryDissection, Complexity, AgentRouting
+    from query_context import QueryDissection, Complexity, AgentRouting, EnrichedQuery
+
+
+_ENRICHMENT_PROMPT = """\
+You are a query pre-processor for an AI agent. Given a raw user input, your job is to:
+1. Fix grammar, spelling, and punctuation.
+2. Identify the primary intent and key entities.
+3. Break the goal into clear sub-goals.
+4. List any implicit assumptions.
+5. Write an elaborated, detailed query that will help the agent understand exactly what the user needs.
+
+Raw input: {raw_query}
+
+Respond ONLY with a JSON object in this exact format:
+{{
+  "corrected_query": "<grammar-corrected version of the raw input>",
+  "intent": "<primary intent: search | compute | summarize | generate | compare | other>",
+  "entities": ["<entity1>", "<entity2>"],
+  "sub_goals": ["<sub-goal 1>", "<sub-goal 2>"],
+  "user_needs": "<one sentence describing what the user truly wants>",
+  "assumptions": ["<assumption 1>", "<assumption 2>"],
+  "elaborated_query": "<full, detailed, unambiguous query for the agent>"
+}}"""
+
+
+async def enrich_query(raw_query: str, llm_client=None) -> EnrichedQuery:
+    """
+    Use the LLM to correct, elaborate, and fully specify a raw user query.
+    Falls back to a minimal enrichment when no LLM is available.
+    """
+    if not llm_client:
+        return EnrichedQuery(
+            raw_query=raw_query,
+            corrected_query=raw_query.strip(),
+            intent="unknown",
+            entities=[],
+            sub_goals=[],
+            user_needs=raw_query.strip(),
+            assumptions=[],
+            elaborated_query=raw_query.strip(),
+        )
+
+    prompt = _ENRICHMENT_PROMPT.format(raw_query=raw_query)
+    try:
+        raw = await asyncio.to_thread(llm_client.chat, prompt)
+        text = raw.strip()
+        if "```json" in text:
+            text = text.split("```json")[1].split("```")[0].strip()
+        elif "```" in text:
+            text = text.split("```")[1].split("```")[0].strip()
+        data = json.loads(text)
+        return EnrichedQuery(raw_query=raw_query, **data)
+    except Exception:
+        return EnrichedQuery(
+            raw_query=raw_query,
+            corrected_query=raw_query.strip(),
+            intent="unknown",
+            entities=[],
+            sub_goals=[],
+            user_needs=raw_query.strip(),
+            assumptions=[],
+            elaborated_query=raw_query.strip(),
+        )
 
 
 def dissect_user_query(

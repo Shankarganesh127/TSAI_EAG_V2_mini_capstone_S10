@@ -51,5 +51,15 @@ class QueryDissection(BaseModel):
 
     agent_routing: AgentRouting = Field(default_factory=AgentRouting)
     planning_input: Dict[str, Any] = Field(default_factory=dict)
-    
-    
+
+
+class EnrichedQuery(BaseModel):
+    """Output of the LLM-based query enrichment step."""
+    raw_query: str
+    corrected_query: str                              # grammar / spelling fixed
+    intent: str                                       # primary user intent
+    entities: List[str] = Field(default_factory=list) # key nouns / proper nouns
+    sub_goals: List[str] = Field(default_factory=list)# decomposed goals
+    user_needs: str                                   # what the user actually wants
+    assumptions: List[str] = Field(default_factory=list)
+    elaborated_query: str                             # final detailed query for the agent

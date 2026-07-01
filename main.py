@@ -1,27 +1,45 @@
-
 import asyncio
 from config import configure_project
+from agent_base_lib import BaseAgent, AgentState
+from query_lib import enrich_query
 
-# Configure all project components using defaults from config/project_config.yaml
-config = configure_project()
+config     = configure_project()
+logger     = config["logger"]
+llm_client = config.get("llm_client")
 
-logger = config["logger"]
-llm_client = config["llm_client"]
+if llm_client:
+    logger.info(f"LLM ready: {llm_client.config.provider} / {llm_client.config.model}")
+else:
+    logger.warning("No LLM configured — using stub responses")
+
+agent = BaseAgent(llm_client=llm_client)
+
+
+async def run_agent(raw_query: str) -> None:
+    # Step 1: enrich the raw input before sending to the agent
+    enriched = await enrich_query(raw_query, llm_client)
+    if enriched.elaborated_query != raw_query.strip():
+        logger.info(f"Enriched: {enriched.elaborated_query}")
+
+    # Step 2: run the agent on the elaborated query
+    ctx = await agent.run(enriched.elaborated_query)
+    if ctx.error:
+        logger.error(f"{ctx.error}")
+    else:
+        logger.info(f"Result: {ctx.final_output}")
 
 
 async def main():
-    """Main entry point - demonstrates local LLM setup"""
-    logger.info("Hello from eag-v2-mini-capstone-s10!")
-    
-    # Test LLM connection
-    try:
-        logger.info("Testing local LLM connection...")
-        response = llm_client.chat("Say 'Hello from local LLM!' in one sentence.")
-        logger.info(f"LLM Response: {response}\n")
-    except Exception as e:
-        logger.error(f"Failed to connect to LLM: {e}")
-        logger.error("Ensure your local LLM server is running (e.g., Ollama, vLLM, LM Studio)")
-        logger.error("Check that it's accessible at the configured base URL")
+    logger.info("Agent ready. Type 'exit' to quit.")
+    while True:
+        try:
+            query = input("\nQuery: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            break
+        if query.lower() in {"exit", "quit", "q"}:
+            break
+        if query:
+            await run_agent(query)
 
 
 if __name__ == "__main__":
