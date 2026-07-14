@@ -10,7 +10,7 @@
 
 logging:
   # Override logging defaults here
-  level: INFO
+  level: DEBUG
 
   log_dir: logs
   log_file: app.log
@@ -19,11 +19,26 @@ logging:
 
   backup_count: 5
 
+  # Third-party loggers to silence (set to WARNING level)
+  quiet_loggers:
+    - httpcore
+    - httpcore.http11
+    - httpcore.connection
+    - httpx
+    - google_genai.models
+    - urllib3
+    - asyncio
+
 llm:
   # Override LLM defaults here
   use_env: true
 
-  provider: local
-  model: openai/llama-3.1-8b-instruct
-  base_url: http://localhost:8000/v1
+  #provider: local
+  #model: openai/llama-3.1-8b-instruct
+  #base_url: http://localhost:8000/v1
+  #temperature: 0.2
+
+  # Gemini configuration
+  provider: gemini
+  model: gemini-3.5-flash
   temperature: 0.2

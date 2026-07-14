@@ -17,6 +17,7 @@ class LoggingConfig:
         max_bytes: int = 10 * 1024 * 1024,  # 10MB
         backup_count: int = 5,
         format_string: Optional[str] = None,
+        quiet_loggers: Optional[list] = None,
     ):
         self.level = level
         self.log_dir = log_dir
@@ -27,6 +28,7 @@ class LoggingConfig:
             format_string
             or "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         )
+        self.quiet_loggers: list = quiet_loggers or []
 
 
 def get_default_logging_config() -> LoggingConfig:
@@ -49,6 +51,7 @@ def get_default_logging_config() -> LoggingConfig:
         max_bytes=logging_yaml.get("max_bytes", 10 * 1024 * 1024),
         backup_count=logging_yaml.get("backup_count", 5),
         format_string=logging_yaml.get("format_string"),
+        quiet_loggers=logging_yaml.get("quiet_loggers", []),
     )
 
 
@@ -95,7 +98,11 @@ def setup_logging(config: Optional[LoggingConfig] = None) -> logging.Logger:
     file_handler.setLevel(config.level)
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
-    
+
+    # Silence noisy third-party loggers
+    for name in config.quiet_loggers:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
     return logger
 
 

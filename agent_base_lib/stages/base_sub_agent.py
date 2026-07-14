@@ -1,8 +1,11 @@
 import asyncio
+import logging
 from abc import ABC, abstractmethod
 from typing import Any, Generic, Optional, Type, TypeVar
 
 from pydantic import BaseModel
+
+_log = logging.getLogger(__name__)
 
 InputT = TypeVar("InputT", bound=BaseModel)
 OutputT = TypeVar("OutputT", bound=BaseModel)
@@ -33,10 +36,14 @@ class BaseSubAgent(ABC, Generic[InputT, OutputT]):
 
     async def _call(self, prompt: str, input_data: InputT) -> OutputT:
         """Call the LLM, parse the response, and fall back to defaults on error."""
+        stage = self.__class__.__name__
+        _log.debug("[%s] PROMPT:\n%s", stage, prompt)
         try:
             raw = await asyncio.to_thread(self.llm_client.chat, prompt)
+            _log.debug("[%s] RESPONSE:\n%s", stage, raw)
             return self._parse_output(raw, input_data)
-        except Exception:
+        except Exception as exc:
+            _log.warning("[%s] LLM call failed: %s", stage, exc)
             return self._default_output(input_data)
 
     def _build_prompt(self, input_data: InputT) -> str:
@@ -51,7 +58,8 @@ class BaseSubAgent(ABC, Generic[InputT, OutputT]):
             elif "```" in text:
                 text = text.split("```")[1].split("```")[0].strip()
             return self.output_model.model_validate_json(text)
-        except Exception:
+        except Exception as exc:
+            _log.warning("%s parse failed (raw=%r): %s", self.__class__.__name__, raw[:200], exc)
             return self._default_output(input_data)
 
     @abstractmethod

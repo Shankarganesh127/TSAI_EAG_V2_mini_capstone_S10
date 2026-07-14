@@ -64,6 +64,7 @@ class ProjectConfig:
             max_bytes=max_bytes or project_logging.get("max_bytes") or base.max_bytes,
             backup_count=backup_count or project_logging.get("backup_count") or base.backup_count,
             format_string=project_logging.get("format_string") or base.format_string,
+            quiet_loggers=project_logging.get("quiet_loggers") or base.quiet_loggers,
         )
 
     def _resolve_llm_value(self, section: dict, runtime_value, key: str):

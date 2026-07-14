@@ -8,7 +8,12 @@ llm:
   use_env: true
 
   # Used when use_env is false
-  provider: local
-  model: openai/llama-3.1-8b-instruct
-  base_url: http://localhost:8000/v1
+  #provider: local
+  #model: openai/llama-3.1-8b-instruct
+  #base_url: http://localhost:8000/v1
+  #temperature: 0.2
+
+  # Used when use_env is false
+  provider: gemini
+  model: gemini-3.5-flash
   temperature: 0.2
