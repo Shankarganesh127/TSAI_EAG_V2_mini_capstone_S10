@@ -194,9 +194,9 @@ async def run_agent(query: str, services: RuntimeServices) -> str | None:
     return answer
 
 
-async def create_runtime() -> RuntimeServices:
+async def create_runtime(background_logs: bool = False) -> RuntimeServices:
     """Configure dependencies and synchronize persistent stores."""
-    config = configure_project()
+    config = configure_project(log_console_enabled=not background_logs)
     logger = config["logger"]
     llm_client = config.get("llm_client")
     if llm_client is None:

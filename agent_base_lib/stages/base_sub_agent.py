@@ -45,7 +45,14 @@ class BaseSubAgent(ABC, Generic[InputT, OutputT]):
         try:
             raw = await asyncio.to_thread(self.llm_client.chat, prompt)
             _log.debug("[%s] RESPONSE:\n%s", stage, raw)
-            return self._parse_output(raw, input_data)
+            try:
+                return self._parse_output(raw, input_data)
+            except SubAgentError:
+                repair_prompt = self._build_repair_prompt(raw)
+                _log.warning("[%s] Retrying malformed structured output", stage)
+                repaired = await asyncio.to_thread(self.llm_client.chat, repair_prompt)
+                _log.debug("[%s] REPAIRED RESPONSE:\n%s", stage, repaired)
+                return self._parse_output(repaired, input_data)
         except Exception as exc:
             _log.error("[%s] LLM call failed: %s", stage, exc)
             raise SubAgentError(f"{stage} failed: {exc}") from exc
@@ -53,20 +60,47 @@ class BaseSubAgent(ABC, Generic[InputT, OutputT]):
     def _build_prompt(self, input_data: InputT) -> str:
         return self.PROMPT_TEMPLATE.format(**input_data.model_dump())
 
+    def _build_repair_prompt(self, raw: str) -> str:
+        """Ask the model to correct syntax without changing its answer."""
+        schema = self.output_model.model_json_schema()
+        return (
+            "The response below is malformed JSON. Repair JSON syntax only and "
+            "preserve the complete answer. Escape every quote, backslash, and "
+            "newline that occurs inside a JSON string. Return only one JSON "
+            f"object matching this schema: {schema}\n\nMalformed response:\n{raw}"
+        )
+
     def _parse_output(self, raw: str, input_data: InputT) -> OutputT:
         """Extract JSON from LLM response and validate into the output model."""
+        text = raw.strip()
         try:
-            text = raw.strip()
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0].strip()
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0].strip()
             return self.output_model.model_validate_json(text)
-        except Exception as exc:
-            _log.warning("%s parse failed (raw=%r): %s", self.__class__.__name__, raw[:200], exc)
+        except Exception as direct_error:
+            fenced = self._strip_outer_code_fence(text)
+            if fenced != text:
+                try:
+                    return self.output_model.model_validate_json(fenced)
+                except Exception:
+                    pass
+            _log.warning(
+                "%s parse failed (raw=%r): %s",
+                self.__class__.__name__,
+                raw[:200],
+                direct_error,
+            )
             raise SubAgentError(
                 f"{self.__class__.__name__} returned invalid structured output"
-            ) from exc
+            ) from direct_error
+
+    @staticmethod
+    def _strip_outer_code_fence(text: str) -> str:
+        """Remove a Markdown fence only when it wraps the complete response."""
+        if not text.startswith("```") or not text.endswith("```"):
+            return text
+        first_newline = text.find("\n")
+        if first_newline < 0:
+            return text
+        return text[first_newline + 1:-3].strip()
 
     @abstractmethod
     def _default_output(self, input_data: InputT) -> OutputT: ...

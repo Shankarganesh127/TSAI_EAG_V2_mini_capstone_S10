@@ -15,7 +15,7 @@ class ActionOutput(BaseModel):
     response: str
     tool_used: Optional[str] = None
     success: bool = True
-    raw_output: str = ""
+    raw_output: Optional[str] = None
 
 
 class ActionAgent(BaseSubAgent[ActionInput, ActionOutput]):
@@ -56,5 +56,5 @@ Return ONLY the JSON object with no extra text."""
             response=f"Received request: {input_data.normalized_query}",
             tool_used=None,
             success=True,
-            raw_output="",
+            raw_output=None,
         )

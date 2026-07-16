@@ -1,9 +1,12 @@
 ﻿import unittest
 
+import json
+
 from agent_base_lib import BaseAgent, AgentContext, AgentStatus, AgentState, StageResult
 from agent_base_lib.stages.execution_stage import ExecutionStage
 from agent_base_lib.stages.validation_stage import ValidationStage
 from agent_base_lib.stages.cognitive_stage import CognitiveStage
+from agent_base_lib.stages.execution.action import ActionAgent, ActionInput, ActionOutput
 
 
 class TestDefaultPipeline(unittest.IsolatedAsyncioTestCase):
@@ -119,6 +122,59 @@ class TestExceptionHandling(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(ctx.error)
         self.assertIn("provider unavailable", ctx.error)
         self.assertIsNone(ctx.final_output)
+
+    async def test_action_output_accepts_null_optional_raw_output(self):
+        output = ActionOutput.model_validate_json(
+            '{"response":"A Markdown answer","tool_used":null,'
+            '"success":true,"raw_output":null}'
+        )
+
+        self.assertEqual(output.response, "A Markdown answer")
+        self.assertIsNone(output.raw_output)
+
+    async def test_action_parser_preserves_inner_markdown_code_fences(self):
+        payload = json.dumps({
+            "response": "Example:\n\n```python\nprint('hello')\n```",
+            "tool_used": None,
+            "success": True,
+            "raw_output": None,
+        })
+        parser = ActionAgent()
+        parsed = parser._parse_output(
+            payload,
+            ActionInput(normalized_query="give Python code", action="execute_query"),
+        )
+
+        self.assertIn("```python", parsed.response)
+        self.assertIn("print('hello')", parsed.response)
+
+    async def test_malformed_json_is_repaired_once(self):
+        class RepairingClient:
+            def __init__(self):
+                self.prompts = []
+
+            def chat(self, prompt):
+                self.prompts.append(prompt)
+                if len(self.prompts) == 1:
+                    return (
+                        '{"response":"He may say "mama" or "dada".",'
+                        '"tool_used":null,"success":true,"raw_output":null}'
+                    )
+                return json.dumps({
+                    "response": 'He may say "mama" or "dada".',
+                    "tool_used": None,
+                    "success": True,
+                    "raw_output": None,
+                })
+
+        client = RepairingClient()
+        result = await ActionAgent(llm_client=client).run(
+            ActionInput(normalized_query="parenting guide", action="summarize")
+        )
+
+        self.assertEqual(result.response, 'He may say "mama" or "dada".')
+        self.assertEqual(len(client.prompts), 2)
+        self.assertIn("Repair JSON syntax only", client.prompts[1])
 
     async def test_executor_exception_stored_in_error(self):
         async def exploding_executor(ctx: AgentContext) -> str:

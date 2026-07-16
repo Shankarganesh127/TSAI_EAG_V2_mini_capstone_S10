@@ -44,6 +44,7 @@ class ProjectConfig:
         log_file: Optional[str],
         max_bytes: Optional[int],
         backup_count: Optional[int],
+        console_enabled: Optional[bool],
     ) -> LoggingConfig:
         """Build final logging config from library defaults + project overrides + runtime args."""
         project_logging = self.project_overrides.get("logging", {})
@@ -65,6 +66,11 @@ class ProjectConfig:
             backup_count=backup_count or project_logging.get("backup_count") or base.backup_count,
             format_string=project_logging.get("format_string") or base.format_string,
             quiet_loggers=project_logging.get("quiet_loggers") or base.quiet_loggers,
+            console_enabled=(
+                console_enabled
+                if console_enabled is not None
+                else project_logging.get("console_enabled", base.console_enabled)
+            ),
         )
 
     def _resolve_llm_value(self, section: dict, runtime_value, key: str):
@@ -111,6 +117,7 @@ class ProjectConfig:
         log_file: Optional[str] = None,
         max_bytes: Optional[int] = None,
         backup_count: Optional[int] = None,
+        console_enabled: Optional[bool] = None,
     ) -> logging.Logger:
         """
         Configure logging system.
@@ -131,6 +138,7 @@ class ProjectConfig:
             log_file=log_file,
             max_bytes=max_bytes,
             backup_count=backup_count,
+            console_enabled=console_enabled,
         )
         self.logger = setup_logging(logging_cfg)
         
@@ -192,6 +200,7 @@ class ProjectConfig:
         log_file: Optional[str] = None,
         log_max_bytes: Optional[int] = None,
         log_backup_count: Optional[int] = None,
+        log_console_enabled: Optional[bool] = None,
         # LLM config
         llm_use_env: Optional[bool] = None,
         llm_provider: Optional[str] = None,
@@ -224,6 +233,7 @@ class ProjectConfig:
             log_file=log_file,
             max_bytes=log_max_bytes,
             backup_count=log_backup_count,
+            console_enabled=log_console_enabled,
         )
         
         # Configure LLM

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,7 +10,6 @@ import numpy as np
 import pymupdf4llm
 import requests
 import trafilatura
-from markitdown import MarkItDown
 from mcp.server.fastmcp import FastMCP
 
 try:
@@ -104,6 +104,19 @@ def _extract_text(file: Path) -> str:
         return trafilatura.extract(file.read_text(encoding="utf-8", errors="ignore")) or ""
     if ext in {".txt", ".md", ".csv", ".json", ".yaml", ".yml"}:
         return file.read_text(encoding="utf-8", errors="ignore")
+    return _convert_with_markitdown(file)
+
+
+def _convert_with_markitdown(file: Path) -> str:
+    """Convert rich documents without emitting optional audio-tool warnings."""
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="Couldn't find ffmpeg or avconv.*",
+            category=RuntimeWarning,
+        )
+        from markitdown import MarkItDown
+
     return MarkItDown().convert(str(file)).text_content
 
 

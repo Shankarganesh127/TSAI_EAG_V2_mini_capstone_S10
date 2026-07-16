@@ -6,9 +6,11 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "botocore>=1.43.34",
+    "bleach>=6.2.0",
     "bs4>=0.0.2",
     "python-dotenv>=1.0.0",
     "faiss-cpu>=1.14.3",
+    "fastapi>=0.116.0",
     "google-genai>=2.9.0",
     "httpx>=0.28.1",
     "jinja2>=3.1.6",
@@ -16,6 +18,7 @@ dependencies = [
     "llama-index>=0.14.22",
     "llama-index-embeddings-google-genai>=0.5.1",
     "markitdown[all]>=0.1.5",
+    "markdown-it-py>=4.0.0",
     "mcp[cli]>=1.28.0",
     "pillow>=12.2.0",
     "pydantic>=2.13.4",
@@ -26,11 +29,13 @@ dependencies = [
     "rich>=15.0.0",
     "tqdm>=4.68.3",
     "trafilatura>=2.1.0",
+    "uvicorn[standard]>=0.35.0",
 ]
 
 
 [project.scripts]
 llm-api = "llm_api_lib.cli:main"
+agent-web = "web_app:main"
 
 [build-system]
 requires = ["hatchling>=1.25.0"]
@@ -43,7 +48,7 @@ package = true
 dev = ["pytest>=8.0"]
 
 [tool.pytest.ini_options]
-testpaths = ["agent_base_lib", "memory_lib", "query_lib"]
+testpaths = ["agent_base_lib", "memory_lib", "query_lib", "web"]
 python_files = ["test_*.py"]
 
 [tool.hatch.build.targets.wheel]

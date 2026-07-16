@@ -39,6 +39,7 @@ Usage:
 """
 
 import json
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -88,6 +89,7 @@ class SessionLogger:
 
     def __init__(self, session_id: str, query: str, base_dir: str | None = None):
         self.session_id = session_id
+        self._lock = threading.RLock()
         self._path = _get_log_path(session_id, base_dir or _CFG.base_dir)
 
         existing = _load(self._path)
@@ -116,8 +118,9 @@ class SessionLogger:
             entry.update(output)
         elif output is not None:
             entry["output"] = output
-        self._data["stages"].append(entry)
-        _save(self._path, self._data)
+        with self._lock:
+            self._data["stages"].append(entry)
+            _save(self._path, self._data)
         if _CFG.verbose:
             print(f"  ✅ [{stage}]")
 

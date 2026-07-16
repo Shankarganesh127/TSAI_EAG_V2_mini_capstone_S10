@@ -13,7 +13,7 @@ session:
   json_indent: 2
 
   # Print a confirmation line to stdout after every log() call.
-  verbose: true
+  verbose: false
 
   # If a session file exists but contains invalid JSON, overwrite it.
   overwrite_corrupt: true

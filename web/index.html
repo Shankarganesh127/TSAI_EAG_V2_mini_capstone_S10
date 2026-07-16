@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Momentum</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="hero">
+      <div class="eyebrow">ONE QUESTION · ONE STEP FORWARD</div>
+      <h1>Momentum</h1>
+      <p>Turn every question into a useful answer—and every small step into something greater.</p>
+    </header>
+
+    <section class="conversation" id="conversation" aria-live="polite">
+      <article class="message assistant">
+        <div class="label">Agent</div>
+        <div class="bubble">Ask me anything about agent architecture or your indexed knowledge.</div>
+      </article>
+    </section>
+
+    <form class="composer" id="query-form">
+      <label class="sr-only" for="query">Enter your query</label>
+      <textarea id="query" name="query" rows="1"
+        placeholder="Ask a question about your documents or previous results…"
+        maxlength="10000" required></textarea>
+      <button id="submit" type="submit">
+        <span>Ask</span>
+        <span aria-hidden="true">→</span>
+      </button>
+    </form>
+    <p class="status" id="status">Logs and processing details remain in the background.</p>
+  </main>
+  <script src="/static/app.js"></script>
+</body>
+</html>

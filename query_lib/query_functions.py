@@ -45,11 +45,14 @@ def _fallback_enrichment(raw_query: str) -> EnrichedQuery:
 
 def _extract_json_object(raw: str) -> dict:
     text = raw.strip()
-    if "```json" in text:
-        text = text.split("```json", 1)[1].split("```", 1)[0].strip()
-    elif "```" in text:
-        text = text.split("```", 1)[1].split("```", 1)[0].strip()
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        if text.startswith("```") and text.endswith("```"):
+            first_newline = text.find("\n")
+            if first_newline >= 0:
+                return json.loads(text[first_newline + 1:-3].strip())
+        raise
 
 
 async def enrich_query(raw_query: str, llm_client=None) -> EnrichedQuery:

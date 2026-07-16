@@ -18,6 +18,7 @@ class LoggingConfig:
         backup_count: int = 5,
         format_string: Optional[str] = None,
         quiet_loggers: Optional[list] = None,
+        console_enabled: bool = True,
     ):
         self.level = level
         self.log_dir = log_dir
@@ -29,6 +30,7 @@ class LoggingConfig:
             or "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         )
         self.quiet_loggers: list = quiet_loggers or []
+        self.console_enabled = console_enabled
 
 
 def get_default_logging_config() -> LoggingConfig:
@@ -52,6 +54,7 @@ def get_default_logging_config() -> LoggingConfig:
         backup_count=logging_yaml.get("backup_count", 5),
         format_string=logging_yaml.get("format_string"),
         quiet_loggers=logging_yaml.get("quiet_loggers", []),
+        console_enabled=bool(logging_yaml.get("console_enabled", True)),
     )
 
 
@@ -76,7 +79,8 @@ def setup_logging(config: Optional[LoggingConfig] = None) -> logging.Logger:
     logger.handlers.clear()
 
     formatter = logging.Formatter(config.format_string)
-    logger.addHandler(_build_console_handler(config, formatter))
+    if config.console_enabled:
+        logger.addHandler(_build_console_handler(config, formatter))
     logger.addHandler(_build_file_handler(config, formatter, log_path))
 
     _quiet_third_party_loggers(config.quiet_loggers)
