@@ -121,12 +121,14 @@ class SessionLogger:
         if _CFG.verbose:
             print(f"  ✅ [{stage}]")
 
+    @property
+    def path(self) -> Path:
+        """Return the JSON log path for provenance records."""
+        return self._path
 
-# ---------------------------------------------------------------------------
-# Smoke-test
-# ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
+def run_demo() -> None:
+    """Write a representative session log for manual smoke testing."""
     import uuid
 
     logger = SessionLogger(session_id=str(uuid.uuid4()), query="What is the capital of France?")
@@ -165,3 +167,7 @@ if __name__ == "__main__":
         "confidence": 0.99,
         "solution_summary": "Paris is the capital of France.",
     })
+
+
+if __name__ == "__main__":
+    run_demo()

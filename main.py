@@ -1,36 +1,230 @@
 import asyncio
+import logging
+import uuid
+from dataclasses import dataclass
+from typing import Any
+
+from agent_base_lib import BaseAgent
 from config import configure_project
-from agent_base_lib import BaseAgent, AgentState
+from memory_lib import MemoryHit, SessionVectorMemory
 from query_lib import enrich_query
-
-config     = configure_project()
-logger     = config["logger"]
-llm_client = config.get("llm_client")
-
-if llm_client:
-    logger.info(f"LLM ready: {llm_client.config.provider} / {llm_client.config.model}")
-else:
-    logger.warning("No LLM configured — using stub responses")
-
-agent = BaseAgent(llm_client=llm_client)
+from session_lib import SessionLogger, get_default_session_config
 
 
-async def run_agent(raw_query: str) -> None:
-    # Step 1: enrich the raw input before sending to the agent
-    enriched = await enrich_query(raw_query, llm_client)
-    if enriched.elaborated_query != raw_query.strip():
-        logger.info(f"Enriched: {enriched.elaborated_query}")
+@dataclass
+class RuntimeServices:
+    agent: BaseAgent
+    llm_client: Any
+    logger: logging.Logger
+    session: SessionLogger
+    memory: SessionVectorMemory | None
 
-    # Step 2: run the agent on the elaborated query
-    ctx = await agent.run(enriched.elaborated_query)
-    if ctx.error:
-        logger.error(f"{ctx.error}")
+
+async def synchronize_document_corpus(logger: logging.Logger) -> None:
+    """Synchronize local files and saved web content with the RAG index."""
+    try:
+        from mcp_lib.mcp_server_documents import process_documents
+
+        report = await asyncio.to_thread(process_documents)
+    except Exception as exc:
+        logger.warning("Document RAG synchronization failed: %s", exc)
+        return
+
+    if report["changed"]:
+        logger.info(
+            "Document corpus changed; rebuilt RAG DB from %d files (%d chunks)",
+            report["files"],
+            report["chunks"],
+        )
     else:
-        logger.info(f"Result: {ctx.final_output}")
+        logger.info("Document RAG DB is current (%d chunks)", report["chunks"])
 
 
-async def main():
-    logger.info("Agent ready. Type 'exit' to quit.")
+async def synchronize_session_memory(
+    memory: SessionVectorMemory | None,
+    logger: logging.Logger,
+) -> None:
+    """Synchronize successful session turns with the answer-memory index."""
+    if memory is None:
+        return
+
+    logs_dir = get_default_session_config().base_dir
+    report = await memory.sync_session_logs(logs_dir)
+    if report.changed:
+        logger.info(
+            "Session data changed; rebuilt vector DB from %d files (%d records)",
+            report.source_files,
+            report.indexed_records,
+        )
+    else:
+        logger.info("Session data unchanged; existing vector DB is current")
+
+
+async def find_cached_answer(
+    query: str,
+    services: RuntimeServices,
+) -> MemoryHit | None:
+    """Return the strongest qualifying answer-memory hit, if one exists."""
+    if services.memory is None:
+        return None
+
+    try:
+        hits = await services.memory.search(query)
+        serialized = [services.memory.describe_hit(hit) for hit in hits]
+        services.session.log(
+            "memory_search",
+            {"query": query, "result_count": len(hits), "results": serialized},
+        )
+        if not hits:
+            return None
+        services.session.log("memory_hit", serialized[0])
+        return hits[0]
+    except Exception as exc:
+        services.logger.warning(
+            "Vector memory search failed; continuing with agent: %s", exc
+        )
+        services.session.log(
+            "memory_error", {"operation": "search", "error": str(exc)}
+        )
+        return None
+
+
+async def retrieve_rag_evidence(
+    query: str,
+    services: RuntimeServices,
+) -> list[str]:
+    """Retrieve source-labelled chunks from the local document corpus."""
+    try:
+        from mcp_lib.mcp_server_documents import search_documents
+
+        results = await asyncio.to_thread(search_documents, query)
+        evidence = [item for item in results if not item.startswith("ERROR:")]
+        services.session.log(
+            "local_rag_search",
+            {"query": query, "result_count": len(evidence), "results": evidence},
+        )
+        return evidence
+    except Exception as exc:
+        services.logger.warning(
+            "Local RAG search failed; continuing without document context: %s", exc
+        )
+        services.session.log(
+            "rag_error", {"operation": "search", "error": str(exc)}
+        )
+        return []
+
+
+def build_grounded_query(query: str, evidence: list[str]) -> str:
+    """Combine a user query with retrieved evidence and grounding rules."""
+    if not evidence:
+        return query
+    context = "\n\n---\n\n".join(evidence)
+    return (
+        f"{query}\n\nUse the following retrieved local evidence when answering. "
+        "Cite its Source fields and do not invent unsupported details:\n\n"
+        f"{context}"
+    )
+
+
+async def execute_agent_query(
+    original_query: str,
+    grounded_query: str,
+    services: RuntimeServices,
+) -> str | None:
+    """Enrich and execute a query, recording either its answer or error."""
+    enriched = await enrich_query(grounded_query, services.llm_client)
+    if enriched.elaborated_query != original_query.strip():
+        services.logger.info("Enriched: %s", enriched.elaborated_query)
+
+    context = await services.agent.run(enriched.elaborated_query)
+    if context.error:
+        services.logger.error("%s", context.error)
+        services.session.log(
+            "agent_error", {"query": original_query, "error": context.error}
+        )
+        return None
+
+    answer = str(context.final_output)
+    services.logger.info("Result: %s", answer)
+    services.session.log(
+        "agent_result", {"query": original_query, "answer": answer}
+    )
+    return answer
+
+
+async def store_answer_memory(
+    query: str,
+    answer: str,
+    services: RuntimeServices,
+) -> None:
+    """Persist a successful answer in semantic session memory."""
+    if services.memory is None:
+        return
+    try:
+        await services.memory.add(
+            query,
+            answer,
+            services.session.session_id,
+            str(services.session.path),
+        )
+        services.session.log("memory_store", {"query": query, "stored": True})
+    except Exception as exc:
+        services.logger.warning("Could not store answer in vector memory: %s", exc)
+        services.session.log(
+            "memory_error", {"operation": "store", "error": str(exc)}
+        )
+
+
+async def run_agent(query: str, services: RuntimeServices) -> str | None:
+    """Resolve one user query through cache, local RAG, and agent execution."""
+    services.session.log("query_received", {"query": query})
+
+    cached = await find_cached_answer(query, services)
+    if cached is not None:
+        services.logger.info(
+            "Result (memory, similarity %.3f): %s", cached.score, cached.answer
+        )
+        return cached.answer
+
+    evidence = await retrieve_rag_evidence(query, services)
+    grounded_query = build_grounded_query(query, evidence)
+    answer = await execute_agent_query(query, grounded_query, services)
+    if answer is not None:
+        await store_answer_memory(query, answer, services)
+    return answer
+
+
+async def create_runtime() -> RuntimeServices:
+    """Configure dependencies and synchronize persistent stores."""
+    config = configure_project()
+    logger = config["logger"]
+    llm_client = config.get("llm_client")
+    if llm_client is None:
+        logger.warning("No LLM configured - using stub responses")
+    else:
+        logger.info(
+            "LLM ready: %s / %s",
+            llm_client.config.provider,
+            llm_client.config.model,
+        )
+
+    await synchronize_document_corpus(logger)
+    memory = SessionVectorMemory(llm_client) if llm_client is not None else None
+    await synchronize_session_memory(memory, logger)
+
+    return RuntimeServices(
+        agent=BaseAgent(llm_client=llm_client),
+        llm_client=llm_client,
+        logger=logger,
+        session=SessionLogger(str(uuid.uuid4()), "interactive session"),
+        memory=memory,
+    )
+
+
+async def main() -> None:
+    services = await create_runtime()
+    services.logger.info("Agent ready. Type 'exit' to quit.")
+
     while True:
         try:
             query = input("\nQuery: ").strip()
@@ -39,7 +233,7 @@ async def main():
         if query.lower() in {"exit", "quit", "q"}:
             break
         if query:
-            await run_agent(query)
+            await run_agent(query, services)
 
 
 if __name__ == "__main__":

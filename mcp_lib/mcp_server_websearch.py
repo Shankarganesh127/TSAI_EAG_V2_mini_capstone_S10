@@ -1,32 +1,71 @@
-import sys
-import re
 import asyncio
+import hashlib
+import re
+import sys
 import traceback
 import urllib.parse
-from datetime import datetime, timedelta
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List
 
 import httpx
-import yaml
 from bs4 import BeautifulSoup
-from mcp.server.fastmcp import FastMCP, Context
+from mcp.server.fastmcp import Context, FastMCP
 
-from models import SearchInput, UrlInput, PythonCodeOutput
+try:
+    from .models import SearchInput, UrlInput, PythonCodeOutput
+    from .server_utils import load_mcp_config, run_mcp_server
+except ImportError:
+    from models import SearchInput, UrlInput, PythonCodeOutput
+    from server_utils import load_mcp_config, run_mcp_server
 
 mcp = FastMCP("websearch")
 
-# Load parameters from default_mcp_config.yaml
 _cfg_path = Path(__file__).with_name("default_mcp_config.yaml")
-with _cfg_path.open("r", encoding="utf-8") as _f:
-    _cfg = yaml.safe_load(_f).get("websearch", {})
+_project_config = load_mcp_config(_cfg_path)
+_cfg = _project_config.get("websearch", {})
 
 SEARCH_RPM       = int(_cfg.get("search_requests_per_minute", 30))
 FETCH_RPM        = int(_cfg.get("fetch_requests_per_minute",  20))
 REQUEST_TIMEOUT  = float(_cfg.get("request_timeout",          30.0))
 MAX_CONTENT_LEN  = int(_cfg.get("max_content_length",         8000))
 DDG_URL          = str(_cfg.get("ddg_url", "https://html.duckduckgo.com/html"))
+WEB_DOCUMENT_DIR = (
+    Path(__file__).parent
+    / _project_config.get("documents", {}).get("documents_dir", "Documents")
+    / "web"
+)
+
+
+def _store_web_document(kind: str, key: str, content: str) -> Path:
+    """Persist web-derived content in the local document corpus."""
+    WEB_DOCUMENT_DIR.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:20]
+    path = WEB_DOCUMENT_DIR / f"{kind}_{digest}.md"
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+def _refresh_document_index() -> dict:
+    try:
+        from .mcp_server_documents import process_documents
+    except ImportError:
+        from mcp_server_documents import process_documents
+    return process_documents()
+
+
+async def _persist_and_index_web_content(
+    kind: str,
+    key: str,
+    content: str,
+    ctx: Context,
+) -> None:
+    """Store web content and refresh RAG without failing the web request."""
+    _store_web_document(kind, key, content)
+    try:
+        await asyncio.to_thread(_refresh_document_index)
+    except Exception as exc:
+        await ctx.warning(f"Web content saved, but vector indexing failed: {exc}")
 
 
 # --- Rate limiter ---
@@ -67,7 +106,8 @@ class DuckDuckGoSearcher:
     def __init__(self):
         self.rate_limiter = RateLimiter(SEARCH_RPM)
 
-    def _format(self, results: List[SearchResult]) -> str:
+    @staticmethod
+    def format_results(results: list[SearchResult]) -> str:
         if not results:
             return "No results found."
         lines = [f"Found {len(results)} results:\n"]
@@ -75,7 +115,9 @@ class DuckDuckGoSearcher:
             lines += [f"{r.position}. {r.title}", f"   URL: {r.link}", f"   {r.snippet}", ""]
         return "\n".join(lines)
 
-    async def search(self, query: str, ctx: Context, max_results: int = 10) -> List[SearchResult]:
+    async def search(
+        self, query: str, ctx: Context, max_results: int = 10
+    ) -> list[SearchResult]:
         await self.rate_limiter.acquire()
         await ctx.info(f"Searching DuckDuckGo for: {query}")
         try:
@@ -111,8 +153,8 @@ class DuckDuckGoSearcher:
 
             await ctx.info(f"Found {len(results)} results")
             return results
-        except Exception as e:
-            await ctx.error(f"Search error: {e}")
+        except Exception as exc:
+            await ctx.error(f"Search error: {exc}")
             traceback.print_exc(file=sys.stderr)
             return []
 
@@ -130,7 +172,12 @@ class WebContentFetcher:
         await ctx.info(f"Fetching: {url}")
         try:
             async with httpx.AsyncClient() as client:
-                response = await client.get(url, headers=self.HEADERS, follow_redirects=True, timeout=REQUEST_TIMEOUT)
+                response = await client.get(
+                    url,
+                    headers=self.HEADERS,
+                    follow_redirects=True,
+                    timeout=REQUEST_TIMEOUT,
+                )
                 response.raise_for_status()
 
             soup = BeautifulSoup(response.text, "html.parser")
@@ -140,9 +187,9 @@ class WebContentFetcher:
             if len(text) > MAX_CONTENT_LEN:
                 text = text[:MAX_CONTENT_LEN] + "... [truncated]"
             return text
-        except Exception as e:
-            await ctx.error(f"Fetch error: {e}")
-            return f"Error: {e}"
+        except Exception as exc:
+            await ctx.error(f"Fetch error: {exc}")
+            return f"Error: {exc}"
 
 
 # --- Tool instances ---
@@ -157,17 +204,30 @@ fetcher = WebContentFetcher()
 async def duckduckgo_search_results(input: SearchInput, ctx: Context) -> PythonCodeOutput:
     """Search DuckDuckGo and return formatted results."""
     results = await searcher.search(input.query, ctx, input.max_results)
-    return PythonCodeOutput(result=searcher._format(results))
+    formatted = searcher.format_results(results)
+    if results:
+        await _persist_and_index_web_content(
+            "search",
+            input.query,
+            f"# Web search: {input.query}\n\n{formatted}",
+            ctx,
+        )
+    return PythonCodeOutput(result=formatted)
 
 
 @mcp.tool()
 async def download_raw_html_from_url(input: UrlInput, ctx: Context) -> PythonCodeOutput:
     """Fetch and return clean text content from a webpage URL."""
-    return PythonCodeOutput(result=await fetcher.fetch(input.url, ctx))
+    content = await fetcher.fetch(input.url, ctx)
+    if content and not content.startswith("Error:"):
+        await _persist_and_index_web_content(
+            "page",
+            input.url,
+            f"# Web page\n\nSource: {input.url}\n\n{content}",
+            ctx,
+        )
+    return PythonCodeOutput(result=content)
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "dev":
-        mcp.run()
-    else:
-        mcp.run(transport="stdio")
+    run_mcp_server(mcp)

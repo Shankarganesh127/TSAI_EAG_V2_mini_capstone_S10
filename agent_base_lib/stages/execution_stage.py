@@ -24,9 +24,11 @@ class ExecutionStage(BaseStage):
 
     def _sync_client(self, ctx: AgentContext) -> None:
         """Propagate ctx.llm_client to sub-agents when stage has none."""
-        client = self.llm_client or ctx.llm_client
-        for agent in (self._action_agent, self._observation_agent):
-            agent.llm_client = client
+        self.sync_agent_clients(
+            self.llm_client,
+            ctx.llm_client,
+            (self._action_agent, self._observation_agent),
+        )
 
     async def execute(self, ctx: AgentContext) -> StageResult:
         self._sync_client(ctx)

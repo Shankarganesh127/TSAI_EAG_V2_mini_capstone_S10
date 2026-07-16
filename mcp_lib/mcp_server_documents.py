@@ -1,19 +1,23 @@
-import os
-import re
-import sys
-import json
 import hashlib
+import json
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
 import faiss
 import numpy as np
+import pymupdf4llm
 import requests
 import trafilatura
-import pymupdf4llm
-import yaml
-from pathlib import Path
 from markitdown import MarkItDown
 from mcp.server.fastmcp import FastMCP
 
-from models import UrlInput, FilePathInput, MarkdownOutput, SearchDocumentsInput
+try:
+    from .models import UrlInput, FilePathInput, MarkdownOutput, SearchDocumentsInput
+    from .server_utils import load_mcp_config, run_mcp_server
+except ImportError:
+    from models import UrlInput, FilePathInput, MarkdownOutput, SearchDocumentsInput
+    from server_utils import load_mcp_config, run_mcp_server
 
 mcp = FastMCP("documents")
 
@@ -21,92 +25,212 @@ ROOT = Path(__file__).parent.resolve()
 
 # Load parameters from default_mcp_config.yaml
 _cfg_path = ROOT / "default_mcp_config.yaml"
-with _cfg_path.open("r", encoding="utf-8") as _f:
-    _cfg = yaml.safe_load(_f).get("documents", {})
+_cfg = load_mcp_config(_cfg_path).get("documents", {})
 
 EMBED_URL     = _cfg.get("embed_url",        "http://localhost:11434/api/embeddings")
 EMBED_MODEL   = _cfg.get("embed_model",       "nomic-embed-text")
 TOP_K         = int(_cfg.get("top_k",         5))
+MIN_SIMILARITY = float(_cfg.get("min_similarity", 0.35))
 CHUNK_SIZE    = int(_cfg.get("chunk_size",    256))
 CHUNK_OVERLAP = int(_cfg.get("chunk_overlap", 40))
 DOC_DIR       = ROOT / _cfg.get("documents_dir",  "documents")
 INDEX_DIR     = ROOT / _cfg.get("faiss_index_dir", "faiss_index")
 
 
+@dataclass(frozen=True)
+class CorpusPaths:
+    index: Path
+    metadata: Path
+    manifest: Path
+
+
+def _corpus_paths() -> CorpusPaths:
+    return CorpusPaths(
+        index=INDEX_DIR / "index.bin",
+        metadata=INDEX_DIR / "metadata.json",
+        manifest=INDEX_DIR / "corpus_manifest.json",
+    )
+
+
 # --- Embedding & FAISS helpers ---
 
 def get_embedding(text: str) -> np.ndarray:
-    result = requests.post(EMBED_URL, json={"model": EMBED_MODEL, "prompt": text})
+    result = requests.post(
+        EMBED_URL,
+        json={"model": EMBED_MODEL, "prompt": text},
+        timeout=30,
+    )
     result.raise_for_status()
-    return np.array(result.json()["embedding"], dtype=np.float32)
+    vector = np.array(result.json()["embedding"], dtype=np.float32)
+    norm = np.linalg.norm(vector)
+    return vector / norm if norm else vector
 
 def chunk_text(text: str, size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP):
+    if size <= 0 or overlap < 0 or overlap >= size:
+        raise ValueError("chunk size must be positive and overlap must be smaller than size")
     words = text.split()
     for i in range(0, len(words), size - overlap):
         yield " ".join(words[i:i + size])
 
 def ensure_faiss_ready():
-    if not (INDEX_DIR / "index.bin").exists():
-        process_documents()
+    process_documents()
+
+
+def _document_files() -> list[Path]:
+    if not DOC_DIR.exists():
+        return []
+    return sorted(
+        path for path in DOC_DIR.rglob("*")
+        if path.is_file()
+        and not any(
+            part.startswith(".") for part in path.relative_to(DOC_DIR).parts
+        )
+    )
+
+
+def _corpus_fingerprint(files: list[Path]) -> str:
+    digest = hashlib.sha256()
+    for file in files:
+        digest.update(str(file.relative_to(DOC_DIR)).replace("\\", "/").encode("utf-8"))
+        digest.update(file.read_bytes())
+    return digest.hexdigest()
+
+
+def _extract_text(file: Path) -> str:
+    ext = file.suffix.lower()
+    if ext == ".pdf":
+        return pymupdf4llm.to_markdown(str(file))
+    if ext in {".html", ".htm"}:
+        return trafilatura.extract(file.read_text(encoding="utf-8", errors="ignore")) or ""
+    if ext in {".txt", ".md", ".csv", ".json", ".yaml", ".yml"}:
+        return file.read_text(encoding="utf-8", errors="ignore")
+    return MarkItDown().convert(str(file)).text_content
+
+
+def _indexing_signature() -> dict:
+    return {
+        "embedding_model": EMBED_MODEL,
+        "chunk_size": CHUNK_SIZE,
+        "chunk_overlap": CHUNK_OVERLAP,
+    }
+
+
+def _load_json(path: Path, default):
+    if not path.exists():
+        return default
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _corpus_is_current(
+    paths: CorpusPaths,
+    manifest: dict,
+    fingerprint: str,
+) -> bool:
+    return (
+        manifest.get("fingerprint") == fingerprint
+        and manifest.get("indexing_signature") == _indexing_signature()
+        and paths.index.exists()
+        and paths.metadata.exists()
+    )
+
+
+def _build_corpus(files: list[Path]) -> tuple[list[dict], list[np.ndarray]]:
+    metadata: list[dict] = []
+    vectors: list[np.ndarray] = []
+    for file in files:
+        relative = str(file.relative_to(DOC_DIR)).replace("\\", "/")
+        for chunk in chunk_text(_extract_text(file)):
+            if not chunk.strip():
+                continue
+            vectors.append(get_embedding(chunk))
+            metadata.append({
+                "doc": relative,
+                "chunk": chunk,
+                "chunk_id": len(metadata),
+            })
+    return metadata, vectors
+
+
+def _create_faiss_index(vectors: list[np.ndarray]):
+    if not vectors:
+        return None
+    matrix = np.asarray(vectors, dtype=np.float32)
+    index = faiss.IndexFlatIP(matrix.shape[1])
+    index.add(matrix)
+    return index
+
+
+def _persist_corpus(
+    paths: CorpusPaths,
+    metadata: list[dict],
+    index,
+    manifest: dict,
+) -> None:
+    metadata_tmp = paths.metadata.with_suffix(".json.tmp")
+    metadata_tmp.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+    if index is None:
+        if paths.index.exists():
+            paths.index.unlink()
+    else:
+        index_tmp = paths.index.with_suffix(".bin.tmp")
+        faiss.write_index(index, str(index_tmp))
+        index_tmp.replace(paths.index)
+
+    metadata_tmp.replace(paths.metadata)
+    paths.manifest.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 def process_documents():
-    """Index all documents under mcp_lib/documents/ into a FAISS store."""
-    INDEX_DIR.mkdir(exist_ok=True)
+    """Rebuild the document corpus when any source file changes."""
+    INDEX_DIR.mkdir(parents=True, exist_ok=True)
+    DOC_DIR.mkdir(parents=True, exist_ok=True)
 
-    index_file = INDEX_DIR / "index.bin"
-    meta_file  = INDEX_DIR / "metadata.json"
-    cache_file = INDEX_DIR / "doc_index_cache.json"
+    paths = _corpus_paths()
+    files = _document_files()
+    fingerprint = _corpus_fingerprint(files)
+    manifest = _load_json(paths.manifest, {})
+    if _corpus_is_current(paths, manifest, fingerprint):
+        return {"changed": False, "files": len(files), "chunks": manifest.get("chunks", 0)}
 
-    cache = json.loads(cache_file.read_text()) if cache_file.exists() else {}
-    metadata = json.loads(meta_file.read_text()) if meta_file.exists() else []
-    index = faiss.read_index(str(index_file)) if index_file.exists() else None
-
-    for file in DOC_DIR.glob("*.*"):
-        fhash = hashlib.md5(file.read_bytes()).hexdigest()
-        if cache.get(file.name) == fhash:
-            continue
-
-        ext = file.suffix.lower()
-        if ext == ".pdf":
-            text = pymupdf4llm.to_markdown(str(file))
-        elif ext in {".html", ".htm"}:
-            downloaded = trafilatura.fetch_url(file.read_text().strip())
-            text = trafilatura.extract(downloaded) or ""
-        else:
-            text = MarkItDown().convert(str(file)).text_content
-
-        for chunk in chunk_text(text):
-            vec = get_embedding(chunk).reshape(1, -1)
-            if index is None:
-                index = faiss.IndexFlatL2(vec.shape[1])
-            index.add(vec)
-            metadata.append({"doc": file.name, "chunk": chunk, "chunk_id": len(metadata)})
-
-        cache[file.name] = fhash
-
-    if index is not None:
-        faiss.write_index(index, str(index_file))
-        meta_file.write_text(json.dumps(metadata))
-        cache_file.write_text(json.dumps(cache))
+    metadata, vectors = _build_corpus(files)
+    index = _create_faiss_index(vectors)
+    updated_manifest = {
+        "fingerprint": fingerprint,
+        "files": len(files),
+        "chunks": len(metadata),
+        "indexing_signature": _indexing_signature(),
+    }
+    _persist_corpus(paths, metadata, index, updated_manifest)
+    return {"changed": True, "files": len(files), "chunks": len(metadata)}
 
 
 # --- Tools ---
 
-@mcp.tool()
-def search_stored_documents_rag(input: SearchDocumentsInput) -> list[str]:
-    """Search indexed local documents and return relevant text chunks."""
+def search_documents(query: str) -> list[str]:
+    """Search indexed local documents and return grounded source chunks."""
     ensure_faiss_ready()
     try:
-        index = faiss.read_index(str(INDEX_DIR / "index.bin"))
-        metadata = json.loads((INDEX_DIR / "metadata.json").read_text())
-        query_vec = get_embedding(input.query).reshape(1, -1)
-        _, indices = index.search(query_vec, k=TOP_K)
+        paths = _corpus_paths()
+        if not paths.index.exists():
+            return []
+        index = faiss.read_index(str(paths.index))
+        metadata = _load_json(paths.metadata, [])
+        query_vec = get_embedding(query).reshape(1, -1)
+        scores, indices = index.search(query_vec, k=min(TOP_K, len(metadata)))
         return [
-            f"{metadata[i]['chunk']}\n[Source: {metadata[i]['doc']}, ID: {metadata[i]['chunk_id']}]"
-            for i in indices[0]
+            f"{metadata[i]['chunk']}\n[Source: {metadata[i]['doc']}, "
+            f"ID: {metadata[i]['chunk_id']}, Similarity: {float(score):.3f}]"
+            for score, i in zip(scores[0], indices[0])
+            if i >= 0 and float(score) >= MIN_SIMILARITY
         ]
     except Exception as e:
         return [f"ERROR: {e}"]
+
+
+@mcp.tool()
+def search_stored_documents_rag(input: SearchDocumentsInput) -> list[str]:
+    """Search indexed local documents and return relevant text chunks."""
+    return search_documents(input.query)
 
 
 @mcp.tool()
@@ -134,7 +258,4 @@ def extract_pdf(input: FilePathInput) -> MarkdownOutput:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "dev":
-        mcp.run()
-    else:
-        mcp.run(transport="stdio")
+    run_mcp_server(mcp)

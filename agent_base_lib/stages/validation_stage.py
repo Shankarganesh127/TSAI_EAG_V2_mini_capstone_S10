@@ -24,9 +24,11 @@ class ValidationStage(BaseStage):
 
     def _sync_client(self, ctx: AgentContext) -> None:
         """Propagate ctx.llm_client to sub-agents when stage has none."""
-        client = self.llm_client or ctx.llm_client
-        for agent in (self._validator_agent, self._reflection_agent):
-            agent.llm_client = client
+        self.sync_agent_clients(
+            self.llm_client,
+            ctx.llm_client,
+            (self._validator_agent, self._reflection_agent),
+        )
 
     async def execute(self, ctx: AgentContext) -> StageResult:
         self._sync_client(ctx)
@@ -61,5 +63,11 @@ class ValidationStage(BaseStage):
             )
         )
         ctx.reflection = r_out.model_dump()
+
+        if not r_out.should_retry:
+            return StageResult(
+                status=AgentStatus.FAILED,
+                message=r_out.reason or "Validation failed and retry was not recommended",
+            )
 
         return StageResult(status=AgentStatus.NEED_REPLAN, message="replan required")

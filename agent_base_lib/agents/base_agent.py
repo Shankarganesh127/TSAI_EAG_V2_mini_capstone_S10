@@ -58,6 +58,14 @@ class BaseAgent:
             if result.status == AgentStatus.FAILED:
                 return self._fail(ctx, result.message or "Stage returned FAILED")
 
+            if result.status == AgentStatus.NEED_REPLAN:
+                if ctx.loop_count >= ctx.max_loops:
+                    continue
+                try:
+                    await self.cognitive.replan(ctx)
+                except Exception as exc:
+                    return self._fail(ctx, f"Replanning failed: {exc}")
+
         return self._fail(ctx, f"Agent did not complete after {ctx.max_loops} loop(s)")
 
     @staticmethod

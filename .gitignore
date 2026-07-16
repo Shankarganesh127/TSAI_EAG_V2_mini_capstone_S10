@@ -11,4 +11,8 @@ wheels/
 S10Share/
 .env
 logs/*.log
-
+memory_lib/vector_store/
+session_lib/session_logs/
+mcp_lib/Documents/
+mcp_lib/faiss_index/
+memory_lib/vector_store/

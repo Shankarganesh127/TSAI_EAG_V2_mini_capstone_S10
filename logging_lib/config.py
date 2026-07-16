@@ -68,42 +68,50 @@ def setup_logging(config: Optional[LoggingConfig] = None) -> logging.Logger:
     if config is None:
         config = get_default_logging_config()
     
-    # Create logs directory if it doesn't exist
     log_path = Path(config.log_dir)
     log_path.mkdir(parents=True, exist_ok=True)
-    
-    # Get root logger
+
     logger = logging.getLogger()
     logger.setLevel(config.level)
-    
-    # Remove existing handlers to avoid duplicates
     logger.handlers.clear()
-    
-    # Create formatter
+
     formatter = logging.Formatter(config.format_string)
-    
-    # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(config.level)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
-    
-    # File handler with rotation
-    file_path = log_path / config.log_file
-    file_handler = logging.handlers.RotatingFileHandler(
-        file_path,
+    logger.addHandler(_build_console_handler(config, formatter))
+    logger.addHandler(_build_file_handler(config, formatter, log_path))
+
+    _quiet_third_party_loggers(config.quiet_loggers)
+
+    return logger
+
+
+def _build_console_handler(
+    config: LoggingConfig,
+    formatter: logging.Formatter,
+) -> logging.Handler:
+    handler = logging.StreamHandler()
+    handler.setLevel(config.level)
+    handler.setFormatter(formatter)
+    return handler
+
+
+def _build_file_handler(
+    config: LoggingConfig,
+    formatter: logging.Formatter,
+    log_path: Path,
+) -> logging.Handler:
+    handler = logging.handlers.RotatingFileHandler(
+        log_path / config.log_file,
         maxBytes=config.max_bytes,
         backupCount=config.backup_count,
     )
-    file_handler.setLevel(config.level)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
+    handler.setLevel(config.level)
+    handler.setFormatter(formatter)
+    return handler
 
-    # Silence noisy third-party loggers
-    for name in config.quiet_loggers:
+
+def _quiet_third_party_loggers(names: list[str]) -> None:
+    for name in names:
         logging.getLogger(name).setLevel(logging.WARNING)
-
-    return logger
 
 
 def get_logger(name: str) -> logging.Logger:

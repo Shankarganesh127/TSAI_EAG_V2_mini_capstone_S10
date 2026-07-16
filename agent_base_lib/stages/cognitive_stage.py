@@ -23,10 +23,16 @@ class CognitiveStage(BaseStage):
 
     def _sync_client(self, ctx: AgentContext) -> None:
         """Propagate ctx.llm_client to sub-agents when stage has none."""
-        client = self.llm_client or ctx.llm_client
-        for agent in (self._perception_agent, self._context_agent,
-                      self._decision_agent, self._planning_agent):
-            agent.llm_client = client
+        self.sync_agent_clients(
+            self.llm_client,
+            ctx.llm_client,
+            (
+                self._perception_agent,
+                self._context_agent,
+                self._decision_agent,
+                self._planning_agent,
+            ),
+        )
 
     async def execute(self, ctx: AgentContext) -> StageResult:
         self._sync_client(ctx)
@@ -70,3 +76,24 @@ class CognitiveStage(BaseStage):
         ctx.plan = pl_out.model_dump()
 
         return StageResult(status=AgentStatus.SUCCESS, message="cognitive completed")
+
+    async def replan(self, ctx: AgentContext) -> StageResult:
+        """Build a materially revised plan from the latest reflection."""
+        self._sync_client(ctx)
+        ctx.transition_to(AgentState.REPLAN)
+        suggested = ctx.reflection.get("suggested_approach", "")
+        if suggested:
+            ctx.decision["approach"] = suggested
+        pl_out = await self._planning_agent.run(
+            PlanningInput(
+                normalized_query=ctx.perception.get("normalized_query", ctx.user_query),
+                action=ctx.decision.get("action", "execute_query"),
+                approach=ctx.decision.get("approach", suggested),
+                rationale=(
+                    f"Previous attempt failed: {ctx.reflection.get('reason', '')}. "
+                    f"{ctx.decision.get('rationale', '')}"
+                ).strip(),
+            )
+        )
+        ctx.plan = pl_out.model_dump()
+        return StageResult(status=AgentStatus.SUCCESS, message="replan completed")

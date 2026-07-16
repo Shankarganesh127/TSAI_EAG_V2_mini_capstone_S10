@@ -1,28 +1,15 @@
-try:
-    from query_lib.query_functions import dissect_user_query
-except ModuleNotFoundError:
-    from query_functions import dissect_user_query
+from query_lib.query_functions import dissect_user_query
 
-query = "Find current F1 standings and save to Google Sheet"
 
-result = dissect_user_query(
-    raw_query=query,
-    conversation_history=[
-        "User wants MCP-based AI agent architecture",
-        "User wants Gmail, Telegram, and Google Drive MCP servers"
-    ],
-    memory_results=[
-        "User prefers FAISS for conversation memory search"
-    ],
-    known_info={
-        "preferred_memory_store": "FAISS",
-        "preferred_architecture": [
-            "Perception",
-            "Decision",
-            "Action",
-            "Validation"
-        ]
-    }
-)
+def test_dissect_user_query_preserves_context():
+    result = dissect_user_query(
+        raw_query="Find current F1 standings and save to Google Sheet",
+        conversation_history=["User wants an MCP-based architecture"],
+        memory_results=["User prefers FAISS"],
+        known_info={"preferred_memory_store": "FAISS"},
+    )
 
-print(result.model_dump_json(indent=2))
+    assert result.normalized_query == "Find current F1 standings and save to Google Sheet"
+    assert result.conversation_history == ["User wants an MCP-based architecture"]
+    assert result.relevant_memory == ["User prefers FAISS"]
+    assert result.known_information["preferred_memory_store"] == "FAISS"

@@ -5,13 +5,17 @@ import argparse
 from .core import LLMClient
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
+    """Create the command-line parser for the LLM client."""
     parser = argparse.ArgumentParser(
         description="Generic LLM caller for local and hosted providers"
     )
     parser.add_argument("prompt", help="Prompt text to send to the model")
-    args = parser.parse_args()
+    return parser
 
+
+def main() -> None:
+    args = build_parser().parse_args()
     client = LLMClient()
     print(client.chat(args.prompt))
 

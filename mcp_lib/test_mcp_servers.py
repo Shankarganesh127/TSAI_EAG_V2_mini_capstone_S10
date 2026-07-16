@@ -16,6 +16,7 @@ In the Inspector you will see:
 """
 
 import asyncio
+import re
 import sys
 from pathlib import Path
 
@@ -57,6 +58,12 @@ def _verdict(ok: bool, label: str, got: str = "") -> str:
     return f"{tag}  {label}{suffix}"
 
 
+def _has_number(text: str, expected: int | float) -> bool:
+    """Match a complete numeric value, not an incidental substring."""
+    values = [float(value) for value in re.findall(r"(?<![\w.])-?\d+(?:\.\d+)?(?![\w.])", text)]
+    return any(abs(value - float(expected)) < 1e-9 for value in values)
+
+
 # ===========================================================================
 # Individual tool tests
 # ===========================================================================
@@ -67,79 +74,79 @@ def _verdict(ok: bool, label: str, got: str = "") -> str:
 async def test_add() -> str:
     """math server: add(3, 4) == 7"""
     r = await _call("add", {"input": {"a": 3, "b": 4}})
-    return _verdict("7" in r, "add(3, 4) == 7", r)
+    return _verdict(_has_number(r, 7), "add(3, 4) == 7", r)
 
 @mcp.tool()
 async def test_subtract() -> str:
     """math server: subtract(10, 3) == 7"""
     r = await _call("subtract", {"input": {"a": 10, "b": 3}})
-    return _verdict("7" in r, "subtract(10, 3) == 7", r)
+    return _verdict(_has_number(r, 7), "subtract(10, 3) == 7", r)
 
 @mcp.tool()
 async def test_multiply() -> str:
     """math server: multiply(6, 7) == 42"""
     r = await _call("multiply", {"input": {"a": 6, "b": 7}})
-    return _verdict("42" in r, "multiply(6, 7) == 42", r)
+    return _verdict(_has_number(r, 42), "multiply(6, 7) == 42", r)
 
 @mcp.tool()
 async def test_divide() -> str:
     """math server: divide(10, 4) == 2.5"""
     r = await _call("divide", {"input": {"a": 10, "b": 4}})
-    return _verdict("2.5" in r, "divide(10, 4) == 2.5", r)
+    return _verdict(_has_number(r, 2.5), "divide(10, 4) == 2.5", r)
 
 @mcp.tool()
 async def test_power() -> str:
     """math server: power(2, 8) == 256"""
     r = await _call("power", {"input": {"a": 2, "b": 8}})
-    return _verdict("256" in r, "power(2, 8) == 256", r)
+    return _verdict(_has_number(r, 256), "power(2, 8) == 256", r)
 
 @mcp.tool()
 async def test_cbrt() -> str:
     """math server: cbrt(27) ~ 3.0"""
     r = await _call("cbrt", {"input": {"a": 27}})
-    return _verdict("3" in r, "cbrt(27) ~ 3.0", r)
+    return _verdict(_has_number(r, 3), "cbrt(27) ~ 3.0", r)
 
 @mcp.tool()
 async def test_factorial() -> str:
     """math server: factorial(5) == 120"""
     r = await _call("factorial", {"input": {"a": 5}})
-    return _verdict("120" in r, "factorial(5) == 120", r)
+    return _verdict(_has_number(r, 120), "factorial(5) == 120", r)
 
 @mcp.tool()
 async def test_remainder() -> str:
     """math server: remainder(10, 3) == 1"""
     r = await _call("remainder", {"input": {"a": 10, "b": 3}})
-    return _verdict("1" in r, "remainder(10, 3) == 1", r)
+    return _verdict(_has_number(r, 1), "remainder(10, 3) == 1", r)
 
 @mcp.tool()
 async def test_sin() -> str:
     """math server: sin(0) == 0.0"""
     r = await _call("sin", {"input": {"a": 0}})
-    return _verdict("0" in r, "sin(0) == 0.0", r)
+    return _verdict(_has_number(r, 0), "sin(0) == 0.0", r)
 
 @mcp.tool()
 async def test_cos() -> str:
     """math server: cos(0) == 1.0"""
     r = await _call("cos", {"input": {"a": 0}})
-    return _verdict("1" in r, "cos(0) == 1.0", r)
+    return _verdict(_has_number(r, 1), "cos(0) == 1.0", r)
 
 @mcp.tool()
 async def test_tan() -> str:
     """math server: tan(0) == 0.0"""
     r = await _call("tan", {"input": {"a": 0}})
-    return _verdict("0" in r, "tan(0) == 0.0", r)
+    return _verdict(_has_number(r, 0), "tan(0) == 0.0", r)
 
 @mcp.tool()
 async def test_mine() -> str:
     """math server: mine(10, 3) == 4  (a - 2b)"""
     r = await _call("mine", {"input": {"a": 10, "b": 3}})
-    return _verdict("4" in r, "mine(10, 3) == 4", r)
+    return _verdict(_has_number(r, 4), "mine(10, 3) == 4", r)
 
 @mcp.tool()
 async def test_strings_to_chars_to_int() -> str:
     """math server: strings_to_chars_to_int('AB') contains ASCII 65"""
     r = await _call("strings_to_chars_to_int", {"input": {"string": "AB"}})
-    return _verdict("65" in r, "strings_to_chars_to_int('AB') has 65", r)
+    return _verdict(_has_number(r, 65), "strings_to_chars_to_int('AB') has 65", r)
 
 @mcp.tool()
 async def test_int_list_to_exponential_sum() -> str:
@@ -151,7 +158,9 @@ async def test_int_list_to_exponential_sum() -> str:
 async def test_fibonacci_numbers() -> str:
     """math server: fibonacci_numbers(6) == [0, 1, 1, 2, 3, 5]"""
     r = await _call("fibonacci_numbers", {"input": {"n": 6}})
-    return _verdict("5" in r and "0" in r, "fibonacci_numbers(6)", r)
+    expected = [0, 1, 1, 2, 3, 5]
+    values = [int(value) for value in re.findall(r"(?<![\w.])-?\d+(?![\w.])", r)]
+    return _verdict(values[-6:] == expected, "fibonacci_numbers(6)", r)
 
 
 # --- documents ---
@@ -222,21 +231,21 @@ async def _run_cases(cases: list) -> str:
 async def test_math_server() -> str:
     """Run all math server tool tests."""
     return await _run_cases([
-        ("add(3,4)==7",                            "add",                        {"input": {"a": 3,  "b": 4}},          lambda t: "7" in t),
-        ("subtract(10,3)==7",                      "subtract",                   {"input": {"a": 10, "b": 3}},          lambda t: "7" in t),
-        ("multiply(6,7)==42",                      "multiply",                   {"input": {"a": 6,  "b": 7}},          lambda t: "42" in t),
-        ("divide(10,4)==2.5",                      "divide",                     {"input": {"a": 10, "b": 4}},          lambda t: "2.5" in t),
-        ("power(2,8)==256",                        "power",                      {"input": {"a": 2,  "b": 8}},          lambda t: "256" in t),
-        ("cbrt(27)~3.0",                           "cbrt",                       {"input": {"a": 27}},                  lambda t: "3" in t),
-        ("factorial(5)==120",                      "factorial",                  {"input": {"a": 5}},                   lambda t: "120" in t),
-        ("remainder(10,3)==1",                     "remainder",                  {"input": {"a": 10, "b": 3}},          lambda t: "1" in t),
-        ("sin(0)==0.0",                            "sin",                        {"input": {"a": 0}},                   lambda t: "0" in t),
-        ("cos(0)==1.0",                            "cos",                        {"input": {"a": 0}},                   lambda t: "1" in t),
-        ("tan(0)==0.0",                            "tan",                        {"input": {"a": 0}},                   lambda t: "0" in t),
-        ("mine(10,3)==4",                          "mine",                       {"input": {"a": 10, "b": 3}},          lambda t: "4" in t),
-        ("strings_to_chars_to_int('AB') has 65",   "strings_to_chars_to_int",    {"input": {"string": "AB"}},           lambda t: "65" in t),
+        ("add(3,4)==7",                            "add",                        {"input": {"a": 3,  "b": 4}},          lambda t: _has_number(t, 7)),
+        ("subtract(10,3)==7",                      "subtract",                   {"input": {"a": 10, "b": 3}},          lambda t: _has_number(t, 7)),
+        ("multiply(6,7)==42",                      "multiply",                   {"input": {"a": 6,  "b": 7}},          lambda t: _has_number(t, 42)),
+        ("divide(10,4)==2.5",                      "divide",                     {"input": {"a": 10, "b": 4}},          lambda t: _has_number(t, 2.5)),
+        ("power(2,8)==256",                        "power",                      {"input": {"a": 2,  "b": 8}},          lambda t: _has_number(t, 256)),
+        ("cbrt(27)~3.0",                           "cbrt",                       {"input": {"a": 27}},                  lambda t: _has_number(t, 3)),
+        ("factorial(5)==120",                      "factorial",                  {"input": {"a": 5}},                   lambda t: _has_number(t, 120)),
+        ("remainder(10,3)==1",                     "remainder",                  {"input": {"a": 10, "b": 3}},          lambda t: _has_number(t, 1)),
+        ("sin(0)==0.0",                            "sin",                        {"input": {"a": 0}},                   lambda t: _has_number(t, 0)),
+        ("cos(0)==1.0",                            "cos",                        {"input": {"a": 0}},                   lambda t: _has_number(t, 1)),
+        ("tan(0)==0.0",                            "tan",                        {"input": {"a": 0}},                   lambda t: _has_number(t, 0)),
+        ("mine(10,3)==4",                          "mine",                       {"input": {"a": 10, "b": 3}},          lambda t: _has_number(t, 4)),
+        ("strings_to_chars_to_int('AB') has 65",   "strings_to_chars_to_int",    {"input": {"string": "AB"}},           lambda t: _has_number(t, 65)),
         ("int_list_to_exponential_sum([0,1])>0",   "int_list_to_exponential_sum",{"input": {"numbers": [0, 1]}},        lambda t: any(c.isdigit() for c in t)),
-        ("fibonacci_numbers(6) has 5",             "fibonacci_numbers",          {"input": {"n": 6}},                   lambda t: "5" in t),
+        ("fibonacci_numbers(6) has 5",             "fibonacci_numbers",          {"input": {"n": 6}},                   lambda t: _has_number(t, 5)),
     ])
 
 

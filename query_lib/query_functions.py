@@ -29,44 +29,44 @@ Respond ONLY with a JSON object in this exact format:
 }}"""
 
 
+def _fallback_enrichment(raw_query: str) -> EnrichedQuery:
+    cleaned = raw_query.strip()
+    return EnrichedQuery(
+        raw_query=raw_query,
+        corrected_query=cleaned,
+        intent="unknown",
+        entities=[],
+        sub_goals=[],
+        user_needs=cleaned,
+        assumptions=[],
+        elaborated_query=cleaned,
+    )
+
+
+def _extract_json_object(raw: str) -> dict:
+    text = raw.strip()
+    if "```json" in text:
+        text = text.split("```json", 1)[1].split("```", 1)[0].strip()
+    elif "```" in text:
+        text = text.split("```", 1)[1].split("```", 1)[0].strip()
+    return json.loads(text)
+
+
 async def enrich_query(raw_query: str, llm_client=None) -> EnrichedQuery:
     """
     Use the LLM to correct, elaborate, and fully specify a raw user query.
     Falls back to a minimal enrichment when no LLM is available.
     """
     if not llm_client:
-        return EnrichedQuery(
-            raw_query=raw_query,
-            corrected_query=raw_query.strip(),
-            intent="unknown",
-            entities=[],
-            sub_goals=[],
-            user_needs=raw_query.strip(),
-            assumptions=[],
-            elaborated_query=raw_query.strip(),
-        )
+        return _fallback_enrichment(raw_query)
 
     prompt = _ENRICHMENT_PROMPT.format(raw_query=raw_query)
     try:
         raw = await asyncio.to_thread(llm_client.chat, prompt)
-        text = raw.strip()
-        if "```json" in text:
-            text = text.split("```json")[1].split("```")[0].strip()
-        elif "```" in text:
-            text = text.split("```")[1].split("```")[0].strip()
-        data = json.loads(text)
+        data = _extract_json_object(raw)
         return EnrichedQuery(raw_query=raw_query, **data)
     except Exception:
-        return EnrichedQuery(
-            raw_query=raw_query,
-            corrected_query=raw_query.strip(),
-            intent="unknown",
-            entities=[],
-            sub_goals=[],
-            user_needs=raw_query.strip(),
-            assumptions=[],
-            elaborated_query=raw_query.strip(),
-        )
+        return _fallback_enrichment(raw_query)
 
 
 def dissect_user_query(
@@ -80,7 +80,7 @@ def dissect_user_query(
     memory_results = memory_results or []
     known_info = known_info or {}
 
-    dissection = QueryDissection(
+    return QueryDissection(
         raw_query=raw_query,
         normalized_query=raw_query.strip(),
         intent="unknown",
@@ -103,5 +103,3 @@ def dissect_user_query(
             reflection_agent=False
         )
     )
-
-    return dissection

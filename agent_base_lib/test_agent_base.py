@@ -46,6 +46,29 @@ class TestCustomExecutor(unittest.IsolatedAsyncioTestCase):
 
 class TestValidationRetry(unittest.IsolatedAsyncioTestCase):
 
+    async def test_failed_validation_replans_before_retry(self):
+        approaches = []
+
+        async def recording_executor(ctx: AgentContext) -> str:
+            approaches.append(ctx.decision.get("approach"))
+            return f"attempt {len(approaches)}"
+
+        async def pass_second_attempt(ctx: AgentContext) -> bool:
+            return ctx.loop_count == 2
+
+        agent = BaseAgent(
+            execution=ExecutionStage(executor=recording_executor),
+            validation=ValidationStage(validator=pass_second_attempt),
+            max_loops=2,
+        )
+        ctx = await agent.run("some query")
+
+        self.assertIsNone(ctx.error)
+        self.assertEqual(ctx.final_output, "attempt 2")
+        self.assertEqual(approaches[0], "direct_response")
+        self.assertEqual(approaches[1], "Retry with a more specific approach")
+        self.assertIn(AgentState.REPLAN, ctx.state_history)
+
     async def test_validation_retry_and_max_loop_failure(self):
         async def always_fail(ctx: AgentContext) -> bool:
             return False
@@ -86,6 +109,16 @@ class TestEmptyQuery(unittest.IsolatedAsyncioTestCase):
 
 
 class TestExceptionHandling(unittest.IsolatedAsyncioTestCase):
+
+    async def test_configured_llm_failure_is_not_reported_as_success(self):
+        class BrokenClient:
+            def chat(self, prompt):
+                raise RuntimeError("provider unavailable")
+
+        ctx = await BaseAgent(llm_client=BrokenClient()).run("test")
+        self.assertIsNotNone(ctx.error)
+        self.assertIn("provider unavailable", ctx.error)
+        self.assertIsNone(ctx.final_output)
 
     async def test_executor_exception_stored_in_error(self):
         async def exploding_executor(ctx: AgentContext) -> str:

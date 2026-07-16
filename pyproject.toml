@@ -1,14 +1,13 @@
 [project]
 name = "eag-v2-mini-capstone-s10"
 version = "0.1.0"
-description = "Add your description here"
+description = "A staged async agent framework with query enrichment and MCP tools"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
-    "asyncio>=4.0.0",
     "botocore>=1.43.34",
     "bs4>=0.0.2",
-    "dotenv>=0.9.9",
+    "python-dotenv>=1.0.0",
     "faiss-cpu>=1.14.3",
     "google-genai>=2.9.0",
     "httpx>=0.28.1",
@@ -40,5 +39,20 @@ build-backend = "hatchling.build"
 [tool.uv]
 package = true
 
+[dependency-groups]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["agent_base_lib", "memory_lib", "query_lib"]
+python_files = ["test_*.py"]
+
 [tool.hatch.build.targets.wheel]
-packages = ["llm_api_lib"]
+packages = [
+    "agent_base_lib",
+    "config",
+    "llm_api_lib",
+    "logging_lib",
+    "mcp_lib",
+    "query_lib",
+    "session_lib",
+]

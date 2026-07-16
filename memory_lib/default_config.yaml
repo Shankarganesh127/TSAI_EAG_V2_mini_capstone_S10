@@ -1,0 +1,4 @@
+memory:
+  base_dir: vector_store
+  similarity_threshold: 0.88
+  top_k: 3

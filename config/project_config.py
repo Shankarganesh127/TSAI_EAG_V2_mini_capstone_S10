@@ -72,6 +72,37 @@ class ProjectConfig:
         if runtime_value is not None:
             return runtime_value
         return section.get(key)
+
+    def _resolve_llm_options(
+        self,
+        provider: Optional[str],
+        model: Optional[str],
+        base_url: Optional[str],
+        temperature: Optional[float],
+        use_env: Optional[bool],
+    ) -> dict:
+        section = self.project_overrides.get("llm", {})
+        resolved_use_env = self._resolve_llm_value(section, use_env, "use_env")
+        return {
+            "provider": self._resolve_llm_value(section, provider, "provider"),
+            "model": self._resolve_llm_value(section, model, "model"),
+            "base_url": self._resolve_llm_value(section, base_url, "base_url"),
+            "temperature": self._resolve_llm_value(
+                section, temperature, "temperature"
+            ),
+            "load_env": True if resolved_use_env is None else resolved_use_env,
+        }
+
+    def _log_llm_configuration(self, source: str) -> None:
+        config = self.llm_client.config
+        self.logger.info("[OK] LLM configured %s", source)
+        self.logger.info(
+            "  LLM params: provider=%s, model=%s, base_url=%s, temperature=%s",
+            config.provider,
+            config.model,
+            config.base_url,
+            config.temperature,
+        )
         
     def configure_logging(
         self,
@@ -140,54 +171,15 @@ class ProjectConfig:
         if not self.logger:
             self.logger = get_logger(__name__)
 
-        llm_yaml = self.project_overrides.get("llm", {})
-        resolved_use_env = self._resolve_llm_value(llm_yaml, use_env, "use_env")
-        if resolved_use_env is None:
-            resolved_use_env = True
-        resolved_provider = self._resolve_llm_value(llm_yaml, provider, "provider")
-        resolved_model = self._resolve_llm_value(llm_yaml, model, "model")
-        resolved_base_url = self._resolve_llm_value(llm_yaml, base_url, "base_url")
-        resolved_temperature = self._resolve_llm_value(llm_yaml, temperature, "temperature")
-        
+        options = self._resolve_llm_options(
+            provider, model, base_url, temperature, use_env
+        )
         try:
-            if resolved_use_env:
-                # Let llm_api_lib resolve using env and its own defaults.
-                self.llm_client = LLMClient(
-                    provider=resolved_provider,
-                    model=resolved_model,
-                    base_url=resolved_base_url,
-                    temperature=resolved_temperature,
-                    load_env=True,
-                )
-                llm_cfg = self.llm_client.config
-                self.logger.info("[OK] LLM configured from environment")
-                self.logger.info(
-                    "  LLM params: "
-                    f"provider={llm_cfg.provider}, "
-                    f"model={llm_cfg.model}, "
-                    f"base_url={llm_cfg.base_url}, "
-                    f"temperature={llm_cfg.temperature}"
-                )
-            else:
-                # Use provided parameters
-                self.llm_client = LLMClient(
-                    provider=resolved_provider,
-                    model=resolved_model,
-                    base_url=resolved_base_url,
-                    temperature=resolved_temperature,
-                    load_env=False,
-                )
-                self.logger.info("[OK] LLM configured with YAML/custom parameters")
-                self.logger.info(
-                    "  LLM params: "
-                    f"provider={resolved_provider}, "
-                    f"model={resolved_model}, "
-                    f"base_url={resolved_base_url}, "
-                    f"temperature={resolved_temperature}, "
-                    f"use_env={resolved_use_env}"
-                )
-        except Exception as e:
-            self.logger.error(f"[ERROR] Failed to configure LLM: {e}")
+            self.llm_client = LLMClient(**options)
+            source = "from environment" if options["load_env"] else "with YAML/custom parameters"
+            self._log_llm_configuration(source)
+        except Exception as exc:
+            self.logger.error("[ERROR] Failed to configure LLM: %s", exc)
             raise
         
         return self.llm_client

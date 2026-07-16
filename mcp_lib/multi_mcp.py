@@ -1,6 +1,6 @@
+import logging
 import os
 import sys
-import logging
 from pathlib import Path
 from typing import Any
 
@@ -9,60 +9,115 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 logger = logging.getLogger(__name__)
-
 _CONFIG_PATH = Path(__file__).with_name("default_mcp_config.yaml")
 
 
 def load_server_configs(config_path: Path = _CONFIG_PATH) -> list[dict]:
-    """Load MCP server configs from a YAML file."""
+    """Load server definitions and resolve their working paths."""
     if not config_path.exists():
         raise FileNotFoundError(f"MCP config not found: {config_path}")
-    with config_path.open("r", encoding="utf-8") as f:
-        data = yaml.safe_load(f) or {}
+    with config_path.open("r", encoding="utf-8") as handle:
+        data = yaml.safe_load(handle) or {}
+
     servers = data.get("mcp_servers", [])
-    # Resolve relative script paths relative to the config file's directory
-    config_dir = str(config_path.parent)
     for server in servers:
-        if not os.path.isabs(server["script"]):
-            server["script"] = str(config_path.parent / server["script"])
-        if "cwd" not in server:
-            server["cwd"] = config_dir
+        server["script"] = _resolve_script_path(server["script"], config_path.parent)
+        server.setdefault("cwd", str(config_path.parent))
     return servers
 
 
+def _resolve_script_path(script: str, config_dir: Path) -> str:
+    return script if os.path.isabs(script) else str(config_dir / script)
+
+
 class MultiMCP:
-    """Manages multiple MCP servers and routes tool calls to the right one."""
+    """Discover MCP tools and route calls to their owning server."""
 
     def __init__(self, server_configs: list[dict] | None = None):
-        self.server_configs = server_configs or load_server_configs()
-        self.tool_map: dict[str, dict] = {}  # tool_name -> {config, tool}
+        self.server_configs = (
+            load_server_configs() if server_configs is None else server_configs
+        )
+        self.tool_map: dict[str, dict] = {}
 
-    def _server_params(self, config: dict) -> StdioServerParameters:
+    @staticmethod
+    def _server_params(config: dict) -> StdioServerParameters:
         return StdioServerParameters(
             command=sys.executable,
             args=[config["script"]],
             cwd=config.get("cwd", os.getcwd()),
         )
 
-    async def initialize(self):
-        """Discover all tools from all configured servers."""
+    async def initialize(self) -> dict:
+        """Discover tools, rejecting required failures and name collisions."""
+        discovered: dict[str, dict] = {}
+        failures: list[str] = []
+        required_failures: list[str] = []
+
         for config in self.server_configs:
             try:
-                params = self._server_params(config)
-                async with stdio_client(params) as (read, write):
-                    async with ClientSession(read, write) as session:
-                        await session.initialize()
-                        tools = await session.list_tools()
-                        for tool in tools.tools:
-                            self.tool_map[tool.name] = {"config": config, "tool": tool}
-                logger.info(f"[OK] MCP server '{config['id']}' initialized — tools: {[t.name for t in tools.tools]}")
-            except Exception as e:
-                logger.error(f"[ERROR] Failed to initialize MCP server '{config.get('id')}': {e}")
+                tools = await self._discover_server_tools(config)
+                self._merge_discovered_tools(discovered, config, tools)
+                self._log_initialized_server(config, tools)
+            except Exception as exc:
+                failure = self._format_initialization_failure(config, exc)
+                failures.append(failure)
+                if config.get("required", True):
+                    required_failures.append(failure)
+
+        if required_failures:
+            self.tool_map.clear()
+            raise RuntimeError(
+                "Required MCP initialization failed: " + "; ".join(required_failures)
+            )
+
+        self.tool_map = discovered
+        return self._initialization_report(failures)
+
+    async def _discover_server_tools(self, config: dict) -> list[Any]:
+        params = self._server_params(config)
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                response = await session.list_tools()
+                return list(response.tools)
+
+    @staticmethod
+    def _merge_discovered_tools(
+        discovered: dict[str, dict], config: dict, tools: list[Any]
+    ) -> None:
+        for tool in tools:
+            if tool.name in discovered:
+                owner = discovered[tool.name]["config"]["id"]
+                raise ValueError(
+                    f"Duplicate tool '{tool.name}' from '{owner}' and '{config['id']}'"
+                )
+            discovered[tool.name] = {"config": config, "tool": tool}
+
+    @staticmethod
+    def _log_initialized_server(config: dict, tools: list[Any]) -> None:
+        logger.info(
+            "[OK] MCP server '%s' initialized - tools: %s",
+            config["id"],
+            [tool.name for tool in tools],
+        )
+
+    @staticmethod
+    def _format_initialization_failure(config: dict, exc: Exception) -> str:
+        server_id = config.get("id", "<unknown>")
+        logger.error("[ERROR] Failed to initialize MCP server '%s': %s", server_id, exc)
+        return f"{server_id}: {exc}"
+
+    def _initialization_report(self, failures: list[str]) -> dict:
+        return {
+            "servers": len(self.server_configs),
+            "tools": len(self.tool_map),
+            "failures": failures,
+        }
 
     async def call_tool(self, tool_name: str, arguments: dict) -> Any:
-        """Call a tool by name on the appropriate server."""
+        """Call a tool on its owning server."""
         entry = self.tool_map.get(tool_name)
-        if not entry:
+        if entry is None:
             raise ValueError(f"Tool '{tool_name}' not found on any server.")
         params = self._server_params(entry["config"])
         async with stdio_client(params) as (read, write):
@@ -71,7 +126,7 @@ class MultiMCP:
                 return await session.call_tool(tool_name, arguments)
 
     def list_all_tools(self) -> list[dict]:
-        """Return a list of all discovered tools with their server id."""
+        """Return discovered tools with their owning server IDs."""
         return [
             {"name": name, "server": entry["config"]["id"], "tool": entry["tool"]}
             for name, entry in self.tool_map.items()

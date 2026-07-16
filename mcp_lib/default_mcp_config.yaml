@@ -66,13 +66,14 @@ documents:
 
   # Number of FAISS top-K results to return per query
   top_k: 5
+  min_similarity: 0.35
 
   # Text chunking: words per chunk and overlap between chunks
   chunk_size: 256
   chunk_overlap: 40
 
   # Paths relative to mcp_lib/ (resolved at runtime)
-  documents_dir: "documents"
+  documents_dir: "Documents"
   faiss_index_dir: "faiss_index"
 
 

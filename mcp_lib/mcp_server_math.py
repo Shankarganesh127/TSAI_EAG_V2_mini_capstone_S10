@@ -1,26 +1,31 @@
 import math
-import sys
 from mcp.server.fastmcp import FastMCP
 from PIL import Image as PILImage
 
-from models import (
-    AddInput, AddOutput,
-    SubtractInput, SubtractOutput,
-    MultiplyInput, MultiplyOutput,
-    DivideInput, DivideOutput,
-    PowerInput, PowerOutput,
-    CbrtInput, CbrtOutput,
-    FactorialInput, FactorialOutput,
-    RemainderInput, RemainderOutput,
-    SinInput, SinOutput,
-    CosInput, CosOutput,
-    TanInput, TanOutput,
-    MineInput, MineOutput,
-    CreateThumbnailInput, ImageOutput,
-    StringsToIntsInput, StringsToIntsOutput,
-    ExpSumInput, ExpSumOutput,
-    FibonacciInput, FibonacciOutput,
-)
+try:
+    from .models import (
+        AddInput, AddOutput, SubtractInput, SubtractOutput,
+        MultiplyInput, MultiplyOutput, DivideInput, DivideOutput,
+        PowerInput, PowerOutput, CbrtInput, CbrtOutput,
+        FactorialInput, FactorialOutput, RemainderInput, RemainderOutput,
+        SinInput, SinOutput, CosInput, CosOutput, TanInput, TanOutput,
+        MineInput, MineOutput, CreateThumbnailInput, ImageOutput,
+        StringsToIntsInput, StringsToIntsOutput, ExpSumInput, ExpSumOutput,
+        FibonacciInput, FibonacciOutput,
+    )
+    from .server_utils import run_mcp_server
+except ImportError:
+    from models import (
+        AddInput, AddOutput, SubtractInput, SubtractOutput,
+        MultiplyInput, MultiplyOutput, DivideInput, DivideOutput,
+        PowerInput, PowerOutput, CbrtInput, CbrtOutput,
+        FactorialInput, FactorialOutput, RemainderInput, RemainderOutput,
+        SinInput, SinOutput, CosInput, CosOutput, TanInput, TanOutput,
+        MineInput, MineOutput, CreateThumbnailInput, ImageOutput,
+        StringsToIntsInput, StringsToIntsOutput, ExpSumInput, ExpSumOutput,
+        FibonacciInput, FibonacciOutput,
+    )
+    from server_utils import run_mcp_server
 
 mcp = FastMCP("math")
 
@@ -114,7 +119,4 @@ def fibonacci_numbers(input: FibonacciInput) -> FibonacciOutput:
 
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1 and sys.argv[1] == "dev":
-        mcp.run()
-    else:
-        mcp.run(transport="stdio")
+    run_mcp_server(mcp)
