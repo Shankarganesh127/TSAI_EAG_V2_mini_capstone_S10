@@ -1,5 +1,5 @@
-# ==========================================================
-# MCP Server Configuration — default_mcp_config.yaml
+﻿# ==========================================================
+# MCP Server Configuration â€” default_mcp_config.yaml
 # ==========================================================
 # Single source of truth for all MCP server configs and parameters.
 # Script paths are relative to this file's directory (mcp_lib/).
@@ -36,6 +36,7 @@ mcp_servers:
       - strings_to_chars_to_int
       - int_list_to_exponential_sum
       - fibonacci_numbers
+      - current_time
 
   - id: documents
     script: mcp_server_documents.py

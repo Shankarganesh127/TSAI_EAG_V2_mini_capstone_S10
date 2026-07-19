@@ -1,4 +1,4 @@
-from typing import Any, Optional
+﻿from typing import Any, Optional
 
 from ..core.context import AgentContext
 from ..core.enums import AgentStatus, AgentState
@@ -16,19 +16,30 @@ class BaseAgent:
         validation: Optional[ValidationStage] = None,
         max_loops: int = 3,
         llm_client: Optional[Any] = None,
+        tool_registry: Optional[Any] = None,
+        event_handler: Optional[Any] = None,
     ):
         self.llm_client = llm_client
         self.max_loops = max_loops
+        self.event_handler = event_handler
         # Pass llm_client to each stage so they can use it independently
-        self.cognitive  = cognitive  or CognitiveStage(llm_client=llm_client)
-        self.execution  = execution  or ExecutionStage(llm_client=llm_client)
+        self.cognitive = cognitive or CognitiveStage(llm_client=llm_client)
+        self.execution = execution or ExecutionStage(
+            llm_client=llm_client,
+            tool_registry=tool_registry,
+        )
         self.validation = validation or ValidationStage(llm_client=llm_client)
 
     async def run(self, user_query: str) -> AgentContext:
         if not user_query or not user_query.strip():
             raise ValueError("user_query must not be empty")
 
-        ctx = AgentContext(user_query=user_query, max_loops=self.max_loops, llm_client=self.llm_client)
+        ctx = AgentContext(
+            user_query=user_query,
+            max_loops=self.max_loops,
+            llm_client=self.llm_client,
+            event_handler=self.event_handler,
+        )
         ctx.transition_to(AgentState.INPUT_RECEIVED)
 
         try:

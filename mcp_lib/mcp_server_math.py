@@ -1,4 +1,7 @@
-import math
+﻿import math
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from mcp.server.fastmcp import FastMCP
 from PIL import Image as PILImage
 
@@ -11,7 +14,7 @@ try:
         SinInput, SinOutput, CosInput, CosOutput, TanInput, TanOutput,
         MineInput, MineOutput, CreateThumbnailInput, ImageOutput,
         StringsToIntsInput, StringsToIntsOutput, ExpSumInput, ExpSumOutput,
-        FibonacciInput, FibonacciOutput,
+        FibonacciInput, FibonacciOutput, CurrentTimeInput, CurrentTimeOutput,
     )
     from .server_utils import run_mcp_server
 except ImportError:
@@ -23,7 +26,7 @@ except ImportError:
         SinInput, SinOutput, CosInput, CosOutput, TanInput, TanOutput,
         MineInput, MineOutput, CreateThumbnailInput, ImageOutput,
         StringsToIntsInput, StringsToIntsOutput, ExpSumInput, ExpSumOutput,
-        FibonacciInput, FibonacciOutput,
+        FibonacciInput, FibonacciOutput, CurrentTimeInput, CurrentTimeOutput,
     )
     from server_utils import run_mcp_server
 
@@ -89,6 +92,23 @@ def tan(input: TanInput) -> TanOutput:
 def mine(input: MineInput) -> MineOutput:
     """Special mining operation: a - 2b."""
     return MineOutput(result=input.a - input.b - input.b)
+
+@mcp.tool()
+def current_time(input: CurrentTimeInput) -> CurrentTimeOutput:
+    """Return exact current local times for one or more IANA timezones."""
+    lines = []
+    for timezone_name in input.timezones:
+        try:
+            current = datetime.now(ZoneInfo(timezone_name))
+        except ZoneInfoNotFoundError:
+            lines.append(f"{timezone_name}: invalid or unavailable IANA timezone")
+            continue
+        lines.append(
+            f"{timezone_name}: {current.strftime('%Y-%m-%d %H:%M:%S %Z')} "
+            f"(UTC{current.strftime('%z')[:3]}:{current.strftime('%z')[3:]})"
+        )
+    return CurrentTimeOutput(result="\n".join(lines))
+
 
 @mcp.tool()
 def create_thumbnail(input: CreateThumbnailInput) -> ImageOutput:

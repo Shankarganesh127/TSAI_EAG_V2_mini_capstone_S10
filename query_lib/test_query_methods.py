@@ -1,4 +1,4 @@
-from query_lib.query_functions import dissect_user_query
+﻿from query_lib.query_functions import dissect_user_query
 
 
 def test_dissect_user_query_preserves_context():
@@ -13,3 +13,11 @@ def test_dissect_user_query_preserves_context():
     assert result.conversation_history == ["User wants an MCP-based architecture"]
     assert result.relevant_memory == ["User prefers FAISS"]
     assert result.known_information["preferred_memory_store"] == "FAISS"
+
+
+def test_current_time_queries_are_classified_as_volatile():
+    from main import is_current_time_query
+
+    assert is_current_time_query("What is the current time in my location?")
+    assert is_current_time_query("Show the local time in Tokyo")
+    assert not is_current_time_query("Explain how time zones work")

@@ -1,12 +1,13 @@
-import asyncio
+﻿import asyncio
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from agent_base_lib import BaseAgent
 from config import configure_project
 from memory_lib import MemoryHit, SessionVectorMemory
+from mcp_lib import MultiMCP
 from query_lib import enrich_query
 from session_lib import SessionLogger, get_default_session_config
 
@@ -18,6 +19,47 @@ class RuntimeServices:
     logger: logging.Logger
     session: SessionLogger
     memory: SessionVectorMemory | None
+    mcp: MultiMCP | None
+    background_tasks: set[asyncio.Task[Any]] = field(default_factory=set)
+
+
+WEB_CONTENT_TOOLS = {
+    "duckduckgo_search_results",
+    "download_raw_html_from_url",
+}
+
+
+def schedule_document_sync(
+    context: Any,
+    services: RuntimeServices,
+) -> None:
+    """Refresh RAG in the host process without delaying the user response."""
+    tool = context.action_result.get("tool_used")
+    if tool not in WEB_CONTENT_TOOLS:
+        return
+    task = asyncio.create_task(synchronize_document_corpus(services.logger))
+    services.background_tasks.add(task)
+    task.add_done_callback(services.background_tasks.discard)
+    services.session.log(
+        "rag_sync_scheduled",
+        {"tool": tool, "background": True},
+    )
+
+
+async def initialize_mcp_tools(logger: logging.Logger) -> MultiMCP | None:
+    """Discover every configured MCP tool without making startup brittle."""
+    registry = MultiMCP()
+    try:
+        report = await registry.initialize()
+    except Exception as exc:
+        logger.warning("MCP initialization failed; continuing without tools: %s", exc)
+        return None
+    logger.info(
+        "MCP ready: %d tools across %d servers",
+        report["tools"],
+        report["servers"],
+    )
+    return registry
 
 
 async def synchronize_document_corpus(logger: logging.Logger) -> None:
@@ -137,6 +179,7 @@ async def execute_agent_query(
         services.logger.info("Enriched: %s", enriched.elaborated_query)
 
     context = await services.agent.run(enriched.elaborated_query)
+    schedule_document_sync(context, services)
     if context.error:
         services.logger.error("%s", context.error)
         services.session.log(
@@ -175,22 +218,51 @@ async def store_answer_memory(
         )
 
 
+def is_current_time_query(query: str) -> bool:
+    """Return true for clock queries whose answers become stale immediately."""
+    lowered = query.lower()
+    return any(
+        phrase in lowered
+        for phrase in ("current time", "local time", "what time is it", "time now")
+    )
+
+
 async def run_agent(query: str, services: RuntimeServices) -> str | None:
     """Resolve one user query through cache, local RAG, and agent execution."""
     services.session.log("query_received", {"query": query})
+    volatile = is_current_time_query(query)
 
-    cached = await find_cached_answer(query, services)
+    if volatile:
+        services.session.log(
+            "memory_bypass",
+            {"query": query, "reason": "current-time query"},
+        )
+        cached = None
+    else:
+        cached = await find_cached_answer(query, services)
     if cached is not None:
         services.logger.info(
             "Result (memory, similarity %.3f): %s", cached.score, cached.answer
         )
         return cached.answer
 
-    evidence = await retrieve_rag_evidence(query, services)
+    if volatile:
+        services.session.log(
+            "rag_bypass",
+            {"query": query, "reason": "current-time query"},
+        )
+        evidence = []
+    else:
+        evidence = await retrieve_rag_evidence(query, services)
     grounded_query = build_grounded_query(query, evidence)
     answer = await execute_agent_query(query, grounded_query, services)
-    if answer is not None:
+    if answer is not None and not volatile:
         await store_answer_memory(query, answer, services)
+    elif answer is not None:
+        services.session.log(
+            "memory_store_skipped",
+            {"query": query, "reason": "current-time query"},
+        )
     return answer
 
 
@@ -209,15 +281,23 @@ async def create_runtime(background_logs: bool = False) -> RuntimeServices:
         )
 
     await synchronize_document_corpus(logger)
+    mcp = await initialize_mcp_tools(logger)
     memory = SessionVectorMemory(llm_client) if llm_client is not None else None
     await synchronize_session_memory(memory, logger)
 
+    session = SessionLogger(str(uuid.uuid4()), "interactive session")
     return RuntimeServices(
-        agent=BaseAgent(llm_client=llm_client),
+        agent=BaseAgent(
+            llm_client=llm_client,
+            tool_registry=mcp,
+            event_handler=session.log,
+        ),
         llm_client=llm_client,
         logger=logger,
-        session=SessionLogger(str(uuid.uuid4()), "interactive session"),
+        session=session,
         memory=memory,
+        mcp=mcp,
+        background_tasks=set(),
     )
 
 

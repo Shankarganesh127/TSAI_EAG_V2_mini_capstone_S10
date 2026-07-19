@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Type
+﻿from typing import Any, Dict, List, Optional, Type
 from pydantic import BaseModel, Field
 from ..base_sub_agent import BaseSubAgent
 
@@ -9,6 +9,8 @@ class ActionInput(BaseModel):
     plan_steps: List[Dict[str, Any]] = Field(default_factory=list)
     rationale: str = ""
     context: str = ""
+    tool_used: Optional[str] = None
+    tool_result: str = ""
 
 
 class ActionOutput(BaseModel):
@@ -33,11 +35,16 @@ Action: {action}
 Plan: {plan_steps}
 Rationale: {rationale}
 Context: {context}
+Tool Used: {tool_used}
+Tool Result: {tool_result}
+
+When a tool result is provided, base the answer on that result. Clearly cite
+URLs or Source fields present in it. Do not claim that no tool was used.
 
 Respond with a JSON object:
 {{
   "response": "<complete answer to the user query>",
-  "tool_used": null,
+  "tool_used": "<tool name, or null>",
   "success": true,
   "raw_output": "<any raw data or intermediate output>"
 }}

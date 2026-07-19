@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import hashlib
 import re
 import sys
@@ -46,26 +46,15 @@ def _store_web_document(kind: str, key: str, content: str) -> Path:
     return path
 
 
-def _refresh_document_index() -> dict:
-    try:
-        from .mcp_server_documents import process_documents
-    except ImportError:
-        from mcp_server_documents import process_documents
-    return process_documents()
-
-
-async def _persist_and_index_web_content(
+async def _persist_web_content(
     kind: str,
     key: str,
     content: str,
     ctx: Context,
 ) -> None:
-    """Store web content and refresh RAG without failing the web request."""
-    _store_web_document(kind, key, content)
-    try:
-        await asyncio.to_thread(_refresh_document_index)
-    except Exception as exc:
-        await ctx.warning(f"Web content saved, but vector indexing failed: {exc}")
+    """Store web content and return immediately; the host refreshes RAG."""
+    path = _store_web_document(kind, key, content)
+    await ctx.info(f"Saved web content for background indexing: {path.name}")
 
 
 # --- Rate limiter ---
@@ -206,7 +195,7 @@ async def duckduckgo_search_results(input: SearchInput, ctx: Context) -> PythonC
     results = await searcher.search(input.query, ctx, input.max_results)
     formatted = searcher.format_results(results)
     if results:
-        await _persist_and_index_web_content(
+        await _persist_web_content(
             "search",
             input.query,
             f"# Web search: {input.query}\n\n{formatted}",
@@ -220,7 +209,7 @@ async def download_raw_html_from_url(input: UrlInput, ctx: Context) -> PythonCod
     """Fetch and return clean text content from a webpage URL."""
     content = await fetcher.fetch(input.url, ctx)
     if content and not content.startswith("Error:"):
-        await _persist_and_index_web_content(
+        await _persist_web_content(
             "page",
             input.url,
             f"# Web page\n\nSource: {input.url}\n\n{content}",

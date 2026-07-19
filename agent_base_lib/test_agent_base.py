@@ -1,4 +1,7 @@
-﻿import unittest
+﻿import asyncio
+import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import json
 
@@ -7,6 +10,7 @@ from agent_base_lib.stages.execution_stage import ExecutionStage
 from agent_base_lib.stages.validation_stage import ValidationStage
 from agent_base_lib.stages.cognitive_stage import CognitiveStage
 from agent_base_lib.stages.execution.action import ActionAgent, ActionInput, ActionOutput
+from agent_base_lib.stages.execution.tool_selection import ToolSelectionOutput
 
 
 class TestDefaultPipeline(unittest.IsolatedAsyncioTestCase):
@@ -26,6 +30,21 @@ class TestDefaultPipeline(unittest.IsolatedAsyncioTestCase):
         self.assertIn(AgentState.INPUT_RECEIVED, ctx.state_history)
         self.assertEqual(ctx.current_state, AgentState.END)
 
+    async def test_every_state_transition_emits_an_event(self):
+        events = []
+        agent = BaseAgent(event_handler=lambda event, payload: events.append(
+            (event, payload)
+        ))
+
+        await agent.run("trace this query")
+
+        transitions = [payload for event, payload in events
+                       if event == "state_transition"]
+        self.assertGreater(len(transitions), 0)
+        self.assertEqual(transitions[0]["from_state"], "start")
+        self.assertEqual(transitions[0]["to_state"], "input_received")
+        self.assertEqual(transitions[-1]["to_state"], "end")
+        self.assertTrue(all("loop_count" in item for item in transitions))
     async def test_cognitive_populates_context(self):
         agent = BaseAgent()
         ctx = await agent.run("some query")
@@ -198,6 +217,187 @@ class TestExceptionHandling(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Cognitive stage failed", ctx.error)
         self.assertEqual(ctx.current_state, AgentState.END)
 
+
+class TestMCPExecution(unittest.IsolatedAsyncioTestCase):
+
+    async def test_current_time_query_uses_deterministic_time_tool(self):
+        registry = SimpleNamespace(
+            tool_map={"current_time": object()},
+            describe_tools=lambda: [{"name": "current_time"}],
+            call_tool=AsyncMock(return_value=SimpleNamespace(
+                content=[SimpleNamespace(
+                    text="Europe/London: 2026-07-19 21:00:00 BST (UTC+01:00)"
+                )]
+            )),
+        )
+        stage = ExecutionStage(tool_registry=registry)
+        stage._tool_agent.run = AsyncMock()
+        ctx = AgentContext(
+            user_query=(
+                "What is the current time in my location and Tokyo?\n\n"
+                "User location timezone (IANA): Europe/London."
+            )
+        )
+        ctx.perception = {"normalized_query": "Current local time and Tokyo"}
+        ctx.decision = {"action": "compute"}
+        ctx.plan = {"steps": []}
+
+        tool_name, result = await stage._execute_tool(ctx)
+
+        self.assertEqual(tool_name, "current_time")
+        self.assertIn("BST", result)
+        registry.call_tool.assert_awaited_once_with(
+            "current_time",
+            {
+                "input": {
+                    "timezones": ["Europe/London", "Asia/Tokyo"],
+                }
+            },
+        )
+        stage._tool_agent.run.assert_not_awaited()
+    async def test_selected_mcp_tool_is_called_and_result_reaches_action(self):
+        registry = SimpleNamespace(
+            tool_map={"add": object()},
+            describe_tools=lambda: [{
+                "name": "add",
+                "server": "math",
+                "description": "Add two numbers",
+                "input_schema": {"type": "object"},
+            }],
+            call_tool=AsyncMock(return_value=SimpleNamespace(
+                content=[SimpleNamespace(text='{"result":7}')]
+            )),
+        )
+        stage = ExecutionStage(tool_registry=registry)
+        stage._tool_agent.run = AsyncMock(return_value=ToolSelectionOutput(
+            tool_name="add",
+            arguments={"input": {"a": 3, "b": 4}},
+            rationale="Math is required",
+        ))
+        stage._action_agent.run = AsyncMock(return_value=ActionOutput(
+            response="3 + 4 is 7.",
+            tool_used="add",
+            success=True,
+        ))
+        events = []
+        ctx = AgentContext(
+            user_query="What is 3 + 4?",
+            event_handler=lambda event, payload: events.append((event, payload)),
+        )
+        ctx.perception = {"normalized_query": "What is 3 + 4?"}
+        ctx.decision = {"action": "compute", "rationale": "Calculate"}
+        ctx.plan = {"steps": [{"step": 1, "description": "Add", "tool": "add"}]}
+
+        await stage._action(ctx)
+
+        registry.call_tool.assert_awaited_once_with(
+            "add", {"input": {"a": 3, "b": 4}}
+        )
+        action_input = stage._action_agent.run.await_args.args[0]
+        self.assertEqual(action_input.tool_used, "add")
+        self.assertIn('"result":7', action_input.tool_result)
+        self.assertEqual(ctx.action_result["tool_used"], "add")
+        self.assertEqual(
+            [event for event, _ in events],
+            ["mcp_tool_call", "mcp_tool_result"],
+        )
+        self.assertEqual(events[0][1]["arguments"], {"input": {"a": 3, "b": 4}})
+        self.assertIn("duration_ms", events[1][1])
+
+    async def test_mcp_failure_emits_error_event(self):
+        registry = SimpleNamespace(
+            tool_map={"add": object()},
+            describe_tools=lambda: [{"name": "add"}],
+            call_tool=AsyncMock(side_effect=RuntimeError("tool unavailable")),
+        )
+        stage = ExecutionStage(tool_registry=registry)
+        stage._tool_agent.run = AsyncMock(return_value=ToolSelectionOutput(
+            tool_name="add",
+            arguments={"input": {"a": 1, "b": 2}},
+        ))
+        events = []
+        ctx = AgentContext(
+            user_query="Add numbers",
+            event_handler=lambda event, payload: events.append((event, payload)),
+        )
+        ctx.perception = {"normalized_query": "Add 1 and 2"}
+        ctx.decision = {"action": "compute"}
+        ctx.plan = {"steps": []}
+
+        with self.assertRaisesRegex(RuntimeError, "tool unavailable"):
+            await stage._execute_tool(ctx)
+
+        self.assertEqual(
+            [event for event, _ in events],
+            ["mcp_tool_call", "mcp_tool_error"],
+        )
+        self.assertEqual(events[-1][1]["error"], "tool unavailable")
+        self.assertIn("duration_ms", events[-1][1])
+
+    async def test_mcp_timeout_emits_error_and_does_not_hang(self):
+        async def slow_tool(*args, **kwargs):
+            await asyncio.sleep(1)
+
+        registry = SimpleNamespace(
+            tool_map={"add": object()},
+            describe_tools=lambda: [{"name": "add"}],
+            call_tool=slow_tool,
+        )
+        stage = ExecutionStage(
+            tool_registry=registry,
+            tool_timeout_seconds=0.01,
+        )
+        stage._tool_agent.run = AsyncMock(return_value=ToolSelectionOutput(
+            tool_name="add",
+            arguments={"input": {"a": 1, "b": 2}},
+        ))
+        events = []
+        ctx = AgentContext(
+            user_query="Add numbers",
+            event_handler=lambda event, payload: events.append((event, payload)),
+        )
+        ctx.perception = {"normalized_query": "Add 1 and 2"}
+        ctx.decision = {"action": "compute"}
+        ctx.plan = {"steps": []}
+
+        with self.assertRaises(asyncio.TimeoutError):
+            await stage._execute_tool(ctx)
+
+        self.assertEqual(
+            [event for event, _ in events],
+            ["mcp_tool_call", "mcp_tool_error"],
+        )
+        self.assertIn("duration_ms", events[-1][1])
+    async def test_search_web_falls_back_to_duckduckgo_tool(self):
+        registry = SimpleNamespace(
+            tool_map={"duckduckgo_search_results": object()},
+            describe_tools=lambda: [{
+                "name": "duckduckgo_search_results",
+                "server": "websearch",
+                "description": "Search DuckDuckGo",
+                "input_schema": {"type": "object"},
+            }],
+            call_tool=AsyncMock(return_value=SimpleNamespace(
+                content=[SimpleNamespace(text="Found one result")]
+            )),
+        )
+        stage = ExecutionStage(tool_registry=registry)
+        stage._tool_agent.run = AsyncMock(
+            return_value=ToolSelectionOutput(tool_name=None)
+        )
+        ctx = AgentContext(user_query="latest Python release")
+        ctx.perception = {"normalized_query": "latest Python release"}
+        ctx.decision = {"action": "search_web"}
+        ctx.plan = {"steps": []}
+
+        tool_name, result = await stage._execute_tool(ctx)
+
+        self.assertEqual(tool_name, "duckduckgo_search_results")
+        self.assertEqual(result, "Found one result")
+        registry.call_tool.assert_awaited_once_with(
+            "duckduckgo_search_results",
+            {"input": {"query": "latest Python release", "max_results": 5}},
+        )
 
 class TestPackageImports(unittest.IsolatedAsyncioTestCase):
 

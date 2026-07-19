@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+﻿from pydantic import BaseModel, Field
 from typing import List
 
 
@@ -103,6 +103,18 @@ class FibonacciInput(BaseModel):
 
 class FibonacciOutput(BaseModel):
     result: List[int]
+
+
+# --- Time ---
+
+class CurrentTimeInput(BaseModel):
+    timezones: List[str] = Field(
+        min_length=1,
+        description="IANA timezone names such as Europe/London or America/New_York",
+    )
+
+class CurrentTimeOutput(BaseModel):
+    result: str
 
 
 # --- Image ---

@@ -1,4 +1,4 @@
-const form = document.querySelector("#query-form");
+﻿const form = document.querySelector("#query-form");
 const input = document.querySelector("#query");
 const submit = document.querySelector("#submit");
 const conversation = document.querySelector("#conversation");
@@ -29,7 +29,7 @@ function setBusy(busy) {
   submit.disabled = busy;
   input.disabled = busy;
   status.textContent = busy
-    ? "Searching memory and local knowledge…"
+    ? "Searching memory and local knowledgeâ€¦"
     : "Logs and processing details remain in the background.";
 }
 
@@ -46,7 +46,10 @@ form.addEventListener("submit", async (event) => {
     const response = await fetch("/api/query", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({
+        query,
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || null,
+      }),
     });
     const payload = await response.json();
     if (!response.ok) throw new Error(payload.detail || "Request failed");

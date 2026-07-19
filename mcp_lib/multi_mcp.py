@@ -1,4 +1,4 @@
-import logging
+﻿import logging
 import os
 import sys
 from pathlib import Path
@@ -129,5 +129,17 @@ class MultiMCP:
         """Return discovered tools with their owning server IDs."""
         return [
             {"name": name, "server": entry["config"]["id"], "tool": entry["tool"]}
+            for name, entry in self.tool_map.items()
+        ]
+
+    def describe_tools(self) -> list[dict]:
+        """Return a prompt-safe catalog containing exact MCP input schemas."""
+        return [
+            {
+                "name": name,
+                "server": entry["config"]["id"],
+                "description": entry["tool"].description or "",
+                "input_schema": entry["tool"].inputSchema,
+            }
             for name, entry in self.tool_map.items()
         ]

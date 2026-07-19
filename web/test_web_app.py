@@ -1,4 +1,4 @@
-from types import SimpleNamespace
+﻿from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from fastapi.testclient import TestClient
@@ -36,6 +36,25 @@ def test_query_endpoint_returns_agent_answer(monkeypatch):
     }
     run_agent.assert_awaited_once()
 
+
+def test_query_endpoint_attaches_browser_timezone(monkeypatch):
+    run_agent = AsyncMock(return_value="It is 21:00 BST")
+    monkeypatch.setattr(web_app, "run_agent", run_agent)
+    app = web_app.create_app(fake_runtime_factory)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/query",
+            json={
+                "query": "What is the current time in my location?",
+                "timezone": "Europe/London",
+            },
+        )
+
+    assert response.status_code == 200
+    submitted_query = run_agent.await_args.args[0]
+    assert "What is the current time in my location?" in submitted_query
+    assert "User location timezone (IANA): Europe/London" in submitted_query
 
 def test_markdown_is_rendered_and_unsafe_html_is_removed():
     rendered = web_app.render_markdown(

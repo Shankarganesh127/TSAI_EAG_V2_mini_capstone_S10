@@ -1,4 +1,4 @@
-import asyncio
+﻿import asyncio
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -20,6 +20,22 @@ STATIC_DIR = WEB_DIR / "static"
 
 class QueryRequest(BaseModel):
     query: str = Field(min_length=1, max_length=10_000)
+    timezone: str | None = Field(
+        default=None,
+        max_length=100,
+        pattern=r"^[A-Za-z0-9_+\-/]+$",
+    )
+
+
+def build_location_aware_query(query: str, timezone: str | None) -> str:
+    """Attach the browser's IANA timezone when location context is available."""
+    cleaned = query.strip()
+    if not timezone:
+        return cleaned
+    return (
+        f"{cleaned}\n\nUser location timezone (IANA): {timezone}. "
+        "Interpret 'my location' using this timezone."
+    )
 
 
 class QueryResponse(BaseModel):
@@ -91,7 +107,10 @@ def create_app(
     async def submit_query(payload: QueryRequest, request: Request) -> QueryResponse:
         services: RuntimeServices = request.app.state.services
         async with request.app.state.query_lock:
-            answer = await run_agent(payload.query.strip(), services)
+            answer = await run_agent(
+                build_location_aware_query(payload.query, payload.timezone),
+                services,
+            )
         if answer is None:
             raise HTTPException(
                 status_code=500,
