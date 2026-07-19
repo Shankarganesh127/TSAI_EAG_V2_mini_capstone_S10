@@ -519,3 +519,23 @@ flowchart LR
 - Rebuild indexes only when source data changes.
 - Surface provider failures instead of hiding them.
 - Share small reusable functions between CLI and web.
+
+
+| Area | S10Share | Momentum |
+|---|---|---|
+| Orchestration | Manual agent loop | Explicit state machine |
+| Main reasoning | Perception and Decision | Multiple specialized stages |
+| Completion | Perception flags | Dedicated Validation |
+| Recovery | Manual replanning | Reflection and Replanning states |
+| Execution | Generated Python | Typed MCP dispatch |
+| Tool selection | Code-generation based | Schema-based Tool Selection agent |
+| Memory | RapidFuzz lexical scan | Persistent FAISS semantic search |
+| Documents | Prebuilt/local FAISS | Change-detected automatic rebuilding |
+| Web results | Active-step data | Saved reusable RAG knowledge |
+| Current time | Search-dependent | Deterministic `zoneinfo` tool |
+| Data validation | Dataclasses and manual defaults | Pydantic contracts |
+| Logging | Terminal traces | Rotating logs and structured events |
+| Interface | CLI | CLI and Momentum web UI |
+| Providers | Primarily direct Gemini | Provider-neutral client |
+| Paths | Absolute MCP paths | Portable relative paths |
+| Testing | Component-focused | End-to-end architecture coverage |
