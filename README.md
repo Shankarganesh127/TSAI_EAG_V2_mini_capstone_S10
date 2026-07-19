@@ -399,6 +399,117 @@ Web MCP tools now only persist their result before returning. The CLI/web host s
 
 Check the newest `agent_error` event in session JSON and the matching details in `logs/app.log`.
 
+## Architecture flow diagrams
+
+### S10Share agent flow
+
+```mermaid
+flowchart TD
+    U["User Query"] --> MS["RapidFuzz Memory Search"]
+    MS --> P["Perception"]
+    P --> G{"Original goal achieved?"}
+    G -- Yes --> O["Final Output"]
+    G -- No --> D["Decision"]
+    D --> T{"Step Type"}
+    T -- CODE --> CE["Generated Python Executor"]
+    T -- CONCLUDE --> C["Conclusion"]
+    T -- NOP --> CL["Request Clarification"]
+    CE --> MCP["MCP Tool Call"]
+    MCP --> R["Execution Result"]
+    R --> P2["Perception of Result"]
+    C --> P2
+    P2 --> L{"Local or original goal achieved?"}
+    L -- Original goal --> O
+    L -- Local goal --> D
+    L -- Failed --> RP["Manual Replanning"]
+    RP --> D
+    O --> SS["Overwrite Session Snapshot"]
+```
+
+### Momentum agent flow
+
+```mermaid
+flowchart TD
+    U["User Query"] --> V{"Volatile Query?"}
+    V -- No --> SM["FAISS Semantic Answer Memory"]
+    SM --> MH{"Strong Memory Hit?"}
+    MH -- Yes --> O["Final Markdown Answer"]
+    MH -- No --> RAG["Local Document RAG"]
+    V -- Yes --> QB["Bypass Memory and RAG"]
+    QB --> QE["Query Enrichment"]
+    RAG --> QE
+    QE --> P["Perception"]
+    P --> CR["Context Retrieval"]
+    CR --> D["Decision"]
+    D --> PL["Planning"]
+    PL --> TS["Typed MCP Tool Selection"]
+    TS --> TC{"Tool Required?"}
+    TC -- Yes --> MCP["Validated MCP Tool Call"]
+    TC -- No --> A["Action"]
+    MCP --> TR["Normalized Tool Result"]
+    TR --> A
+    A --> OB["Observation"]
+    OB --> VA["Validation"]
+    VA --> VR{"Validation Result"}
+    VR -- Success --> O
+    VR -- Need Replan --> RF["Reflection"]
+    RF --> RP["Replanning"]
+    RP --> TS
+    VR -- Failed --> E["Error"]
+    O --> SL["Session Event Log"]
+    E --> SL
+    SL --> VM["Future Semantic Memory"]
+```
+
+### MCP execution and persistence flow
+
+```mermaid
+flowchart LR
+    TS["Tool Selection Agent"] --> REG["MCP Tool Registry"]
+    REG --> M["Math and Time Server"]
+    REG --> D["Document Server"]
+    REG --> W["Web Search Server"]
+    M --> MT["Math · Fibonacci · Current Time"]
+    D --> DT["Document RAG · PDF · Webpage Conversion"]
+    W --> WT["DuckDuckGo · Page Fetching"]
+    WT --> SAVE["Save Web Content"]
+    SAVE --> BG["Background FAISS Rebuild"]
+    MT --> A["Grounded Action Answer"]
+    DT --> A
+    WT --> A
+    A --> LOG["Tool Call · Result · Error Logs"]
+```
+
+### Architectural evolution
+
+```mermaid
+flowchart LR
+    subgraph S["S10Share"]
+        S1["Perception"]
+        S2["Decision"]
+        S3["Generated Code"]
+        S4["MCP Execution"]
+        S5["Perception Again"]
+        S1 --> S2 --> S3 --> S4 --> S5
+        S5 --> S2
+    end
+
+    subgraph M["Momentum"]
+        M1["Perception"]
+        M2["Context"]
+        M3["Decision"]
+        M4["Planning"]
+        M5["Tool Selection"]
+        M6["Action"]
+        M7["Observation"]
+        M8["Validation"]
+        M9["Reflection"]
+        M1 --> M2 --> M3 --> M4 --> M5 --> M6 --> M7 --> M8
+        M8 --> M9 --> M4
+    end
+
+    S -- "Evolved into" --> M
+```
 ## Design principles
 
 - Keep cognitive responsibilities explicit and testable.
